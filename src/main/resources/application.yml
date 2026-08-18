@@ -1,0 +1,146 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: jc-rag-kb
+
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/ragkb}
+    username: ${POSTGRES_USER:ragkb}
+    password: ${POSTGRES_PASSWORD:ragkb123}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      connection-timeout: 30000
+
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      separator: ";;"
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: ${JPA_SHOW_SQL:false}
+    properties:
+      hibernate:
+        format_sql: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  task:
+    execution:
+      pool:
+        core-size: 4
+        max-size: 8
+        queue-capacity: 100
+      thread-name-prefix: "index-task-"
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+
+  ai:
+    model:
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+    openai:
+      chat:
+        base-url: ${CHAT_BASE_URL:https://api.deepseek.com}
+        api-key: ${DEEPSEEK_API_KEY:}
+        options:
+          model: ${CHAT_MODEL:deepseek-v4-pro}
+          temperature: ${CHAT_TEMPERATURE:0.1}
+          max-tokens: ${CHAT_MAX_TOKENS:2048}
+      embedding:
+        base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+        api-key: ${DASHSCOPE_API_KEY:}
+        model: ${EMBEDDING_MODEL:text-embedding-v3}
+
+  cache:
+    query-enabled: ${RAG_QUERY_CACHE_ENABLED:false}
+    type: redis
+    redis:
+      time-to-live: ${CACHE_TTL_MS:600000}
+      cache-null-values: false
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket: ${MINIO_BUCKET:rag-documents}
+
+reranker:
+  enabled: ${RERANKER_ENABLED:false}
+  endpoint: ${RERANKER_ENDPOINT:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+  api-key: ${RERANKER_API_KEY:${DASHSCOPE_API_KEY:}}
+  model: ${RERANKER_MODEL:gte-rerank-v2}
+  timeout-ms: ${RERANKER_TIMEOUT_MS:800}
+  top-n: ${RERANKER_TOP_N:5}
+
+rag:
+  demo-data:
+    enabled: ${RAG_DEMO_DATA_ENABLED:false}
+  parser:
+    pdf:
+      crop-header-points: ${PDF_CROP_HEADER_POINTS:60}
+      crop-footer-points: ${PDF_CROP_FOOTER_POINTS:50}
+  chunk:
+    size: ${RAG_CHUNK_SIZE:512}
+    overlap: ${RAG_CHUNK_OVERLAP:64}
+    structure-aware: ${RAG_CHUNK_STRUCTURE_AWARE:true}
+  retrieval:
+    vector-top-k: ${RAG_VECTOR_TOP_K:20}
+    fulltext-top-k: ${RAG_FULLTEXT_TOP_K:20}
+    return-top-n: ${RAG_RETURN_TOP_N:5}
+    min-score: ${RAG_MIN_SCORE:0.5}
+  context:
+    max-tokens: ${RAG_CONTEXT_MAX_TOKENS:3000}
+  cache:
+    query-enabled: ${RAG_QUERY_CACHE_ENABLED:false}
+    embedding-ttl: ${EMBEDDING_CACHE_TTL:7d}
+    query-ttl: ${QUERY_CACHE_TTL:10m}
+
+sa-token:
+  token-name: Authorization
+  token-prefix: Bearer
+  timeout: 86400
+  is-concurrent: true
+  is-share: false
+  is-read-header: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    com.yooooo.rag: ${APP_LOG_LEVEL:INFO}
+    org.springframework.ai: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"

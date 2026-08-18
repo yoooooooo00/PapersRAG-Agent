@@ -1,0 +1,9 @@
+.env
+target/
+.idea/
+*.iml
+*.log
+*.jpg
+*.jpeg
+*.png
+zoom_url.ps1
