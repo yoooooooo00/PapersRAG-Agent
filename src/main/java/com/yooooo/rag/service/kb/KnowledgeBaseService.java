@@ -105,7 +105,7 @@ public class KnowledgeBaseService {
     }
 
     @Transactional
-    public KbDocument uploadDocument(Long kbId, org.springframework.web.multipart.MultipartFile file) {
+    public KbDocument createDocumentRecord(Long kbId, org.springframework.web.multipart.MultipartFile file) {
         String fileName = file.getOriginalFilename();
         validateFileType(fileName);
 
@@ -120,9 +120,14 @@ public class KnowledgeBaseService {
         doc.setUploadedBy(UserContext.getUserId());
         KbDocument saved = documentRepository.save(doc);
 
-        indexService.submitIndexTask(saved.getId());
+        log.info("[KB] document record created docId={} fileName={} kbId={}", saved.getId(), fileName, kbId);
+        return saved;
+    }
 
-        log.info("[KB] 文档上传：docId={}，fileName={}，kbId={}", saved.getId(), fileName, kbId);
+    public KbDocument uploadDocument(Long kbId, org.springframework.web.multipart.MultipartFile file) {
+        KbDocument saved = createDocumentRecord(kbId, file);
+        indexService.submitIndexTask(saved.getId());
+        log.info("[KB] document indexing submitted docId={} fileName={} kbId={}", saved.getId(), saved.getFileName(), kbId);
         return saved;
     }
 

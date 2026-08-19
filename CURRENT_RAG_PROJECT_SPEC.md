@@ -1007,3 +1007,123 @@ curl -X POST "http://localhost:8080/api/v1/papers/upload" \
 Verification:
 
 - `mvn -q -DskipTests compile` passed after adding this endpoint.
+
+## 14. Upload-Parse-Index-Save Module Refactor
+
+Updated: 2026-08-19
+
+This section records the focused refactor of the upload, parsing, indexing, and database save path.
+
+### 14.1 Module Boundary
+
+This pass only changes the ingestion/indexing module:
+
+- File upload
+- MinIO storage
+- `KbDocument` file/index record creation
+- `Paper` metadata record creation during paper upload
+- Async indexing task submission
+- Parsing and chunking
+- Embedding generation
+- `DocChunk` save with literature metadata
+
+It does not change the QA/retrieval module yet.
+
+### 14.2 Current Upload Paths
+
+Existing generic document upload still exists:
+
+- `POST /api/v1/kb/{kbId}/documents`
+
+Behavior:
+
+- Upload file to MinIO.
+- Create `KbDocument`.
+- Submit indexing task.
+- Does not create `Paper`.
+
+Literature paper upload:
+
+- `POST /api/v1/papers/upload`
+
+Behavior after this refactor:
+
+1. Validate target KB, default `kbId=1`.
+2. Upload file to MinIO and create `KbDocument` through `KnowledgeBaseService.createDocumentRecord`.
+3. Create and flush `Paper`, bound by `paper.docId = kb_document.id`.
+4. Submit async indexing task only after `Paper` exists.
+5. Return `PaperUploadResponse`.
+
+### 14.3 Service Changes
+
+`KnowledgeBaseService`:
+
+- Added `createDocumentRecord(kbId, file)`.
+- `createDocumentRecord` uploads to MinIO and saves `KbDocument`, but does not submit indexing.
+- Existing `uploadDocument(kbId, file)` remains compatible and now calls `createDocumentRecord`, then submits indexing.
+
+`PaperService`:
+
+- `uploadPaper(...)` now uses the explicit order:
+  - `createDocumentRecord`
+  - `paperRepository.saveAndFlush`
+  - `indexService.submitIndexTask`
+
+Reason:
+
+- Prevents a race where async indexing starts before the `Paper` row exists.
+- Allows `IndexService` to resolve `paperId` by `docId` while saving chunks.
+
+### 14.4 Chunk Save Changes
+
+`DocChunk` now includes:
+
+- `paperId`, mapped to `kb_doc_chunk.paper_id`
+- `sectionType`, mapped to `kb_doc_chunk.section_type`
+
+`IndexService` now:
+
+- Resolves `paperId` from `PaperRepository.findFirstByDocIdAndIsDeletedFalse(docId)`.
+- Writes `paperId` into each `DocChunk` when indexing a paper upload.
+- Infers a lightweight `sectionType` from `sectionTitle` or the first non-empty content line.
+
+Supported inferred section types:
+
+- `ABSTRACT`
+- `INTRODUCTION`
+- `RELATED_WORK`
+- `BACKGROUND`
+- `METHOD`
+- `EXPERIMENTS`
+- `RESULTS`
+- `DISCUSSION`
+- `LIMITATIONS`
+- `CONCLUSION`
+- `REFERENCES`
+- `APPENDIX`
+
+### 14.5 Database Requirement
+
+The database must contain these columns:
+
+```sql
+ALTER TABLE kb_doc_chunk ADD COLUMN IF NOT EXISTS paper_id BIGINT;
+ALTER TABLE kb_doc_chunk ADD COLUMN IF NOT EXISTS section_type VARCHAR(50);
+CREATE INDEX IF NOT EXISTS idx_chunk_paper_id ON kb_doc_chunk (paper_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_section_type ON kb_doc_chunk (section_type);
+```
+
+The generated `database_init_literature_agent.sql` and updated `schema.sql` already include these columns and indexes.
+
+### 14.6 Verification
+
+- `mvn -q -DskipTests compile` passed.
+
+### 14.7 Next Module To Refactor
+
+After this ingestion module is stable, the next isolated module should be paper-scoped retrieval/query:
+
+- Add repository queries by `paper_id`.
+- Add `LiteratureQueryRequest`.
+- Add `/api/v1/literature/query`.
+- Keep existing `/api/v1/rag/query` unchanged during the first pass.

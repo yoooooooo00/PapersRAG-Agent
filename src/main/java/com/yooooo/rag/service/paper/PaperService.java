@@ -20,6 +20,7 @@ import com.yooooo.rag.repository.PaperRelationRepository;
 import com.yooooo.rag.repository.PaperRepository;
 import com.yooooo.rag.security.UserContext;
 import com.yooooo.rag.service.kb.KnowledgeBaseService;
+import com.yooooo.rag.service.indexing.IndexService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,9 +38,9 @@ public class PaperService {
     private final KnowledgeBaseRepository kbRepository;
     private final KbDocumentRepository documentRepository;
     private final KnowledgeBaseService knowledgeBaseService;
+    private final IndexService indexService;
 
 
-    @Transactional
     public PaperUploadResponse uploadPaper(
             Long kbId,
             MultipartFile file,
@@ -62,7 +63,7 @@ public class PaperService {
             throw BizException.badRequest("Paper file must not be empty");
         }
 
-        KbDocument doc = knowledgeBaseService.uploadDocument(targetKbId, file);
+        KbDocument doc = knowledgeBaseService.createDocumentRecord(targetKbId, file);
         Paper paper = new Paper();
         paper.setKbId(targetKbId);
         paper.setDocId(doc.getId());
@@ -82,7 +83,8 @@ public class PaperService {
         paper.setNote(note);
         paper.setCreatedBy(UserContext.getUserId());
 
-        Paper saved = paperRepository.save(paper);
+        Paper saved = paperRepository.saveAndFlush(paper);
+        indexService.submitIndexTask(doc.getId());
         log.info("[Paper] uploaded paperId={} docId={} fileName={}", saved.getId(), doc.getId(), doc.getFileName());
         return PaperUploadResponse.builder()
                 .paperId(saved.getId())
@@ -137,7 +139,7 @@ public class PaperService {
         paper.setNote(req.getNote());
         paper.setCreatedBy(UserContext.getUserId());
 
-        Paper saved = paperRepository.save(paper);
+        Paper saved = paperRepository.saveAndFlush(paper);
         log.info("[Paper] created paperId={} title={}", saved.getId(), saved.getTitle());
         return toVO(saved);
     }
@@ -174,7 +176,7 @@ public class PaperService {
         if (req.getRating() != null) paper.setRating(req.getRating());
         if (req.getNote() != null) paper.setNote(req.getNote());
 
-        Paper saved = paperRepository.save(paper);
+        Paper saved = paperRepository.saveAndFlush(paper);
         log.info("[Paper] updated paperId={}", saved.getId());
         return toVO(saved);
     }

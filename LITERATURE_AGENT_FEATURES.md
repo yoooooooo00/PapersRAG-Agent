@@ -281,3 +281,14 @@ Completed upload wrapper:
 - The endpoint uploads a file through the existing RAG document pipeline and automatically creates a bound `Paper` record.
 - If no title is provided, the file name without extension is used as the paper title.
 - Indexing still happens asynchronously through the existing `KbDocument` and `IndexTask` flow.
+
+Updated: 2026-08-19
+
+Completed focused ingestion/indexing refactor:
+
+- Paper upload now creates the file record first, then creates the `Paper`, then submits indexing.
+- Indexed chunks now store `paperId` when they come from a paper upload.
+- Indexed chunks now store a lightweight inferred `sectionType` for future paper-scoped retrieval.
+- Generic document upload remains compatible with the original RAG behavior.
+
+The QA module has not been refactored in this pass.

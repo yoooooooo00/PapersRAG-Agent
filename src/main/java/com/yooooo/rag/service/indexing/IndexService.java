@@ -38,6 +38,7 @@ public class IndexService {
     private final EmbeddingService embeddingService;
     private final MinioStorageService minioStorageService;
     private final IndexTaskLauncher taskLauncher;
+    private final PaperRepository paperRepository;
 
     public void submitIndexTask(Long docId, String textContent) {
         IndexTask task = new IndexTask();
@@ -122,17 +123,20 @@ public class IndexService {
             chunkRepository.deleteByDocIdAndDocVersionLessThan(docId, doc.getVersion());
 
             List<DocChunk> docChunks = new ArrayList<>();
+            Long paperId = resolvePaperId(docId);
             int totalTokens = 0;
             for (int i = 0; i < chunks.size(); i++) {
                 ChunkResult chunk = chunks.get(i);
                 DocChunk docChunk = new DocChunk();
                 docChunk.setDocId(docId);
                 docChunk.setKbId(doc.getKbId());
+                docChunk.setPaperId(paperId);
                 docChunk.setChunkIndex(chunk.getChunkIndex());
                 docChunk.setContent(chunk.getContent());
                 docChunk.setEmbedding(embeddings.get(i));
                 docChunk.setPageNum(chunk.getPageNum());
                 docChunk.setSectionTitle(chunk.getSectionTitle());
+                docChunk.setSectionType(inferSectionType(chunk.getSectionTitle(), chunk.getContent()));
                 docChunk.setTokenCount(chunk.getEstimatedTokens());
                 docChunk.setDocVersion(doc.getVersion());
                 docChunks.add(docChunk);
@@ -159,6 +163,56 @@ public class IndexService {
         }
     }
 
+
+    private Long resolvePaperId(Long docId) {
+        return paperRepository.findFirstByDocIdAndIsDeletedFalse(docId)
+                .map(Paper::getId)
+                .orElse(null);
+    }
+
+    private String inferSectionType(String sectionTitle, String content) {
+        String value = firstNonBlank(sectionTitle, firstLine(content));
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.toLowerCase();
+        if (normalized.contains("abstract")) return "ABSTRACT";
+        if (normalized.contains("introduction")) return "INTRODUCTION";
+        if (normalized.contains("related work") || normalized.contains("prior work")) return "RELATED_WORK";
+        if (normalized.contains("background")) return "BACKGROUND";
+        if (normalized.contains("method") || normalized.contains("approach") || normalized.contains("model")) return "METHOD";
+        if (normalized.contains("experiment") || normalized.contains("evaluation") || normalized.contains("setup")) return "EXPERIMENTS";
+        if (normalized.contains("result") || normalized.contains("analysis")) return "RESULTS";
+        if (normalized.contains("discussion")) return "DISCUSSION";
+        if (normalized.contains("limitation")) return "LIMITATIONS";
+        if (normalized.contains("conclusion") || normalized.contains("future work")) return "CONCLUSION";
+        if (normalized.contains("reference") || normalized.equals("bibliography")) return "REFERENCES";
+        if (normalized.contains("appendix") || normalized.contains("supplement")) return "APPENDIX";
+        return null;
+    }
+
+    private String firstLine(String content) {
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+        String[] lines = content.split("\\R");
+        for (String line : lines) {
+            if (!line.isBlank()) {
+                return line.strip();
+            }
+        }
+        return null;
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first.strip();
+        }
+        if (second != null && !second.isBlank()) {
+            return second.strip();
+        }
+        return null;
+    }
     private void batchInsertChunks(List<DocChunk> chunks) {
         int batchSize = 50;
         for (int i = 0; i < chunks.size(); i += batchSize) {

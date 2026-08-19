@@ -25,6 +25,9 @@ public class DocChunk {
     @Column(name = "kb_id", nullable = false)
     private Long kbId;
 
+    @Column(name = "paper_id")
+    private Long paperId;
+
     @Column(name = "chunk_index", nullable = false)
     private Integer chunkIndex;
 
@@ -41,6 +44,9 @@ public class DocChunk {
 
     @Column(name = "section_title", length = 500)
     private String sectionTitle;
+
+    @Column(name = "section_type", length = 50)
+    private String sectionType;
 
     @Column(name = "token_count", nullable = false)
     private Integer tokenCount = 0;
