@@ -849,3 +849,102 @@ Suggested migration strategy:
 3. Add paper-scoped retrieval filters.
 4. Add note APIs.
 5. After MVP works, remove or simplify enterprise auth/permission modules.
+## 13. Implemented Literature Agent Additions
+
+Updated: 2026-08-19
+
+### 13.1 New Entities
+
+- `Paper`
+  - Table: `paper`
+  - Purpose: first-class academic paper metadata.
+  - Fields include `kbId`, `docId`, `title`, `authors`, `year`, `venue`, `doi`, `arxivId`, `abstractText`, `keywords`, `bibtex`, `sourceUrl`, `pdfUrl`, `readingStatus`, `rating`, `note`, `createdBy`, timestamps, and soft delete flag.
+  - Enum: `ReadingStatus`: `UNREAD`, `READING`, `READ`, `ARCHIVED`.
+
+- `PaperNote`
+  - Table: `paper_note`
+  - Purpose: personal reading notes linked to a paper.
+  - Fields include `paperId`, `noteType`, `content`, `pageNum`, `sectionTitle`, `linkedChunkId`, `tags`, timestamps, and soft delete flag.
+  - Enum: `NoteType`: `SUMMARY`, `QUESTION`, `IDEA`, `QUOTE`, `CRITIQUE`, `TODO`.
+
+- `PaperRelation`
+  - Table: `paper_relation`
+  - Purpose: paper-to-paper relation records.
+  - Fields include `sourcePaperId`, `targetPaperId`, `relationType`, `evidenceChunkId`, `note`, `createdAt`, and soft delete flag.
+  - Enum: `RelationType`: `CITES`, `EXTENDS`, `COMPARES_WITH`, `USES_METHOD`, `USES_DATASET`, `CONTRADICTS`, `SAME_TOPIC`.
+
+### 13.2 New Repositories
+
+- `PaperRepository`
+- `PaperNoteRepository`
+- `PaperRelationRepository`
+
+### 13.3 New DTOs
+
+- `PaperCreateRequest`
+- `PaperUpdateRequest`
+- `PaperVO`
+- `PaperNoteRequest`
+- `PaperNoteVO`
+- `PaperRelationRequest`
+- `PaperRelationVO`
+
+### 13.4 New Service
+
+- `PaperService`
+  - Manages paper CRUD.
+  - Manages paper notes.
+  - Manages paper relations.
+  - Validates paper status, note type, relation type, default KB, and optional document binding.
+
+### 13.5 New Controller And APIs
+
+Base path:
+
+- `/api/v1/papers`
+
+Paper endpoints:
+
+- `GET /api/v1/papers`
+  - Optional query params: `kbId`, `status`, `keyword`.
+  - Returns paper list.
+
+- `POST /api/v1/papers`
+  - Body: `PaperCreateRequest`.
+  - Creates a paper metadata record.
+
+- `GET /api/v1/papers/{paperId}`
+  - Returns paper detail.
+
+- `PUT /api/v1/papers/{paperId}`
+  - Body: `PaperUpdateRequest`.
+  - Updates paper metadata.
+
+- `DELETE /api/v1/papers/{paperId}`
+  - Soft-deletes paper.
+
+Paper note endpoints:
+
+- `GET /api/v1/papers/{paperId}/notes`
+- `POST /api/v1/papers/{paperId}/notes`
+- `PUT /api/v1/papers/{paperId}/notes/{noteId}`
+- `DELETE /api/v1/papers/{paperId}/notes/{noteId}`
+
+Paper relation endpoints:
+
+- `GET /api/v1/papers/{paperId}/relations`
+- `POST /api/v1/papers/{paperId}/relations`
+- `DELETE /api/v1/papers/{paperId}/relations/{relationId}`
+
+### 13.6 Verification
+
+- `mvn -q -DskipTests compile` passed after adding the first literature CRUD layer.
+
+### 13.7 Next Recommended Step
+
+Add paper upload flow:
+
+- `POST /api/v1/papers/upload`
+- Upload PDF through existing `KnowledgeBaseService.uploadDocument`.
+- Create a `Paper` record bound to the created `KbDocument`.
+- Use file name as initial paper title when metadata is not provided.

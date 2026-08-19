@@ -256,3 +256,19 @@ Replace later:
 - Prefer section-aware retrieval over generic whole-document retrieval.
 - Preserve academic terms, variables, metrics, and datasets.
 - When evidence is missing, say so explicitly.
+## 7. Implementation Progress
+
+Updated: 2026-08-19
+
+Completed in the first implementation pass:
+
+- Added `Paper` entity, repository, DTOs, service logic, and REST endpoints.
+- Added `PaperNote` entity, repository, DTOs, service logic, and REST endpoints.
+- Added `PaperRelation` entity, repository, DTOs, service logic, and REST endpoints.
+- Updated local database initialization files so the default seed data is `Papers Library` instead of enterprise demo knowledge bases.
+- Generated `database_init_literature_agent.sql` for manual Linux Docker database initialization.
+- Verified Java compilation with `mvn -q -DskipTests compile`.
+
+Next step:
+
+- Add PDF upload endpoint for papers and bind each uploaded file to a `Paper` record.
