@@ -4,8 +4,7 @@ import java.awt.geom.Rectangle2D;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -16,19 +15,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 解析 PDF 文档，按页面提取文本内容。
+ * Parses academic PDF files into page text with lightweight section metadata.
  */
 @Component
+@RequiredArgsConstructor
 @Slf4j
 public class PdfParser implements DocumentParser {
+    private final AcademicSectionDetector sectionDetector;
+
     @Value("${rag.parser.pdf.crop-header-points:60}")
     private float cropHeaderPoints;
 
     @Value("${rag.parser.pdf.crop-footer-points:50}")
     private float cropFooterPoints;
-
-    private static final Pattern HEADING_PATTERN =
-            Pattern.compile("^(第[一二三四五六七八九十百\\d]+[章节]|[一二三四五六七八九十]+、|\\d+\\.)\\s*.+");
 
     @Override
     public String supportedType() {
@@ -40,44 +39,52 @@ public class PdfParser implements DocumentParser {
         try (PDDocument document = Loader.loadPDF(inputStream.readAllBytes())) {
             int totalPages = document.getNumberOfPages();
             List<ParseResult.PageContent> pages = new ArrayList<>();
+            String currentSectionTitle = null;
+            String currentSectionType = null;
 
             for (int pageNum = 1; pageNum <= totalPages; pageNum++) {
                 try {
-                    String text = extractBodyText(document.getPage(pageNum - 1));
-                    text = cleanText(text);
-
+                    String text = cleanText(extractBodyText(document.getPage(pageNum - 1)));
                     if (text.isBlank()) {
-                        log.debug("[PDF解析] 第{}页内容为空，可能是图片页，跳过", pageNum);
+                        log.debug("[PdfParser] Empty text page skipped fileName={} page={}", fileName, pageNum);
                         continue;
+                    }
+
+                    AcademicSectionDetector.SectionMatch match = sectionDetector.detectFromText(text);
+                    if (match.sectionType() != null) {
+                        currentSectionTitle = match.sectionTitle();
+                        currentSectionType = match.sectionType();
                     }
 
                     pages.add(ParseResult.PageContent.builder()
                             .pageNum(pageNum)
                             .text(text)
-                            .sectionTitle(detectHeading(text))
+                            .sectionTitle(currentSectionTitle)
+                            .sectionType(currentSectionType)
                             .build());
-
                 } catch (Exception e) {
-                    log.warn("[PDF解析] 第{}页解析失败：{}", pageNum, e.getMessage());
+                    log.warn("[PdfParser] Failed to parse page fileName={} page={} reason={}",
+                            fileName, pageNum, e.getMessage());
                 }
             }
 
             if (pages.isEmpty()) {
-                return ParseResult.failure("PDF 解析后无有效文本内容，可能是纯图片 PDF，需要 OCR 处理");
+                return ParseResult.failure("PDF parsing produced no text. The file may be scanned and require OCR.");
             }
 
-            log.info("[PDF解析] 文件={}，总页数={}，有效页数={}", fileName, totalPages, pages.size());
+            String title = extractTitle(pages);
+            log.info("[PdfParser] Parsed PDF fileName={} totalPages={} textPages={} title={}",
+                    fileName, totalPages, pages.size(), title);
 
             return ParseResult.builder()
                     .success(true)
                     .pages(pages)
                     .totalPages(totalPages)
-                    .title(extractTitle(pages))
+                    .title(title)
                     .build();
-
         } catch (Exception e) {
-            log.error("[PDF解析] 文件={}，解析失败：{}", fileName, e.getMessage(), e);
-            return ParseResult.failure("PDF 解析失败：" + e.getMessage());
+            log.error("[PdfParser] Failed to parse PDF fileName={} reason={}", fileName, e.getMessage(), e);
+            return ParseResult.failure("PDF parsing failed: " + e.getMessage());
         }
     }
 
@@ -117,28 +124,42 @@ public class PdfParser implements DocumentParser {
                 .strip();
     }
 
-    private String detectHeading(String text) {
-        String[] lines = text.split("\n");
-        for (int i = 0; i < Math.min(3, lines.length); i++) {
-            String line = lines[i].strip();
-            if (line.length() > 2 && line.length() < 50) {
-                Matcher m = HEADING_PATTERN.matcher(line);
-                if (m.matches()) return line;
-            }
-        }
-        return null;
-    }
-
     private String extractTitle(List<ParseResult.PageContent> pages) {
         if (pages.isEmpty()) return null;
-        String firstPageText = pages.get(0).getText();
-        String[] lines = firstPageText.split("\n");
-        for (String line : lines) {
-            line = line.strip();
-            if (!line.isBlank() && line.length() < 100) {
-                return line;
+        String[] lines = pages.get(0).getText().split("\\R");
+        List<String> candidates = new ArrayList<>();
+        for (String rawLine : lines) {
+            String line = rawLine.strip();
+            if (line.isBlank()) {
+                if (!candidates.isEmpty()) break;
+                continue;
+            }
+            if (sectionDetector.detect(line).sectionType() != null) {
+                break;
+            }
+            if (looksLikeAuthorOrMetadata(line)) {
+                if (!candidates.isEmpty()) break;
+                continue;
+            }
+            if (line.length() >= 6 && line.length() <= 180) {
+                candidates.add(line);
+                if (candidates.size() >= 3) break;
             }
         }
-        return null;
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        return String.join(" ", candidates).strip();
+    }
+
+    private boolean looksLikeAuthorOrMetadata(String line) {
+        String lower = line.toLowerCase();
+        return lower.contains("@")
+                || lower.contains("university")
+                || lower.contains("institute")
+                || lower.contains("department")
+                || lower.contains("arxiv")
+                || lower.startsWith("http")
+                || lower.matches(".*\\b20\\d{2}\\b.*");
     }
 }

@@ -136,7 +136,7 @@ public class IndexService {
                 docChunk.setEmbedding(embeddings.get(i));
                 docChunk.setPageNum(chunk.getPageNum());
                 docChunk.setSectionTitle(chunk.getSectionTitle());
-                docChunk.setSectionType(inferSectionType(chunk.getSectionTitle(), chunk.getContent()));
+                docChunk.setSectionType(resolveSectionType(chunk));
                 docChunk.setTokenCount(chunk.getEstimatedTokens());
                 docChunk.setDocVersion(doc.getVersion());
                 docChunks.add(docChunk);
@@ -164,6 +164,13 @@ public class IndexService {
     }
 
 
+
+    private String resolveSectionType(ChunkResult chunk) {
+        if (chunk.getSectionType() != null && !chunk.getSectionType().isBlank()) {
+            return chunk.getSectionType();
+        }
+        return inferSectionType(chunk.getSectionTitle(), chunk.getContent());
+    }
     private Long resolvePaperId(Long docId) {
         return paperRepository.findFirstByDocIdAndIsDeletedFalse(docId)
                 .map(Paper::getId)

@@ -3,20 +3,16 @@ package com.yooooo.rag.service.splitter;
 import com.yooooo.rag.service.loader.ParseResult;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * 根据标题和段落结构切分文本，尽量保留语义完整性。
+ * Splits parsed documents while preserving section metadata from the PDF parser.
  */
 @Component("structureAwareSplitter")
 @Slf4j
 public class StructureAwareChunkSplitter implements ChunkSplitter {
-    private static final Pattern HEADING_PATTERN = Pattern.compile(
-            "^(#{1,3}\\s+|第[一二三四五六七八九十百\\d]+[章节]|[一二三四五六七八九十]+、|\\d+\\.\\d?\\s+)(.{2,60})$"
-    );
-
     private final SlidingWindowChunkSplitter slidingSplitter = new SlidingWindowChunkSplitter();
 
     @Override
@@ -32,25 +28,29 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                         .content(section.text())
                         .pageNum(section.pageNum())
                         .sectionTitle(section.title())
+                        .sectionType(section.sectionType())
                         .estimatedTokens(estimateTokens(section.text()))
                         .build());
-            } else {
-                ParseResult sectionResult = ParseResult.builder()
-                        .success(true)
-                        .pages(List.of(ParseResult.PageContent.builder()
-                                .pageNum(section.pageNum())
-                                .text(section.text())
-                                .sectionTitle(section.title())
-                                .build()))
-                        .totalPages(1)
-                        .build();
+                continue;
+            }
 
-                List<ChunkResult> subChunks = slidingSplitter.split(sectionResult, config);
-                for (ChunkResult sub : subChunks) {
-                    sub.setChunkIndex(chunkIndex++);
-                    if (sub.getSectionTitle() == null) sub.setSectionTitle(section.title());
-                    chunks.add(sub);
-                }
+            ParseResult sectionResult = ParseResult.builder()
+                    .success(true)
+                    .pages(List.of(ParseResult.PageContent.builder()
+                            .pageNum(section.pageNum())
+                            .text(section.text())
+                            .sectionTitle(section.title())
+                            .sectionType(section.sectionType())
+                            .build()))
+                    .totalPages(1)
+                    .build();
+
+            List<ChunkResult> subChunks = slidingSplitter.split(sectionResult, config);
+            for (ChunkResult sub : subChunks) {
+                sub.setChunkIndex(chunkIndex++);
+                if (sub.getSectionTitle() == null) sub.setSectionTitle(section.title());
+                if (sub.getSectionType() == null) sub.setSectionType(section.sectionType());
+                chunks.add(sub);
             }
         }
 
@@ -61,28 +61,43 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         List<TextSection> sections = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         String currentTitle = null;
+        String currentSectionType = null;
         int currentPage = 1;
 
         for (ParseResult.PageContent page : parseResult.getPages()) {
-            String[] lines = page.getText().split("\n");
-            for (String line : lines) {
-                var matcher = HEADING_PATTERN.matcher(line.strip());
-                if (matcher.matches() && current.length() > 50) {
-                    sections.add(new TextSection(currentTitle, current.toString().strip(), currentPage));
-                    current = new StringBuilder();
-                    currentTitle = line.strip();
-                    currentPage = page.getPageNum();
-                }
-                current.append(line).append("\n");
+            if (page.getText() == null || page.getText().isBlank()) {
+                continue;
             }
-            currentPage = page.getPageNum();
+
+            boolean sectionChanged = current.length() > 0
+                    && hasSectionMetadata(page)
+                    && (!Objects.equals(currentSectionType, page.getSectionType())
+                    || !Objects.equals(currentTitle, page.getSectionTitle()));
+
+            if (sectionChanged) {
+                sections.add(new TextSection(currentTitle, currentSectionType, current.toString().strip(), currentPage));
+                current = new StringBuilder();
+            }
+
+            if (current.length() == 0) {
+                currentTitle = page.getSectionTitle();
+                currentSectionType = page.getSectionType();
+                currentPage = page.getPageNum();
+            }
+
+            current.append(page.getText()).append("\n\n");
         }
 
         if (!current.isEmpty()) {
-            sections.add(new TextSection(currentTitle, current.toString().strip(), currentPage));
+            sections.add(new TextSection(currentTitle, currentSectionType, current.toString().strip(), currentPage));
         }
 
         return sections;
+    }
+
+    private boolean hasSectionMetadata(ParseResult.PageContent page) {
+        return (page.getSectionType() != null && !page.getSectionType().isBlank())
+                || (page.getSectionTitle() != null && !page.getSectionTitle().isBlank());
     }
 
     private int estimateTokens(String text) {
@@ -94,9 +109,6 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         }
         return (int) (chinese * 1.5 + other * 0.3);
     }
-/**
- * 结构化切分时识别出的文本段落和标题层级。
- */
 
-    record TextSection(String title, String text, int pageNum) {}
+    record TextSection(String title, String sectionType, String text, int pageNum) {}
 }

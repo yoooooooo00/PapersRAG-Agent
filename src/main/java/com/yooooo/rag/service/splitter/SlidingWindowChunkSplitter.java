@@ -31,6 +31,7 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
                         .content(chunkText)
                         .pageNum(page.getPageNum())
                         .sectionTitle(page.getSectionTitle())
+                        .sectionType(page.getSectionType())
                         .estimatedTokens(estimateTokens(chunkText))
                         .build());
             }

@@ -1220,3 +1220,90 @@ Result:
 
 - Test execution failed while loading Spring ApplicationContext because the local test run could not obtain a JDBC connection to PostgreSQL.
 - The failure is environmental/database connectivity related, not a Java compilation error from the PDF-only parser refactor.
+
+## 16. PDF Academic Section Parsing Refactor
+
+Updated: 2026-08-19
+
+This pass only changed the PDF parsing and metadata propagation module.
+
+### 16.1 Scope
+
+Changed:
+
+- PDF section heading detection.
+- Parsed page metadata.
+- Chunk metadata propagation.
+- Index save behavior for `section_type`.
+
+Not changed:
+
+- QA endpoints.
+- Retrieval queries.
+- Prompt modes.
+- Paper CRUD/upload APIs.
+
+### 16.2 New Section Detector
+
+Added:
+
+- `AcademicSectionDetector`
+
+Purpose:
+
+- Detect common academic paper section headings from extracted text.
+- Support common English and Chinese section names.
+
+Supported section types:
+
+- `ABSTRACT`
+- `INTRODUCTION`
+- `RELATED_WORK`
+- `BACKGROUND`
+- `METHOD`
+- `EXPERIMENTS`
+- `RESULTS`
+- `DISCUSSION`
+- `LIMITATIONS`
+- `CONCLUSION`
+- `REFERENCES`
+- `APPENDIX`
+
+### 16.3 Parse Metadata Changes
+
+`ParseResult.PageContent` now includes:
+
+- `sectionType`
+
+`PdfParser` now:
+
+- Extracts text by page as before.
+- Detects section heading from the first several non-empty lines of each page.
+- Carries the current section title/type across subsequent pages until a new section is detected.
+- Extracts a lightweight paper title from the first page.
+
+### 16.4 Chunk Metadata Changes
+
+`ChunkResult` now includes:
+
+- `sectionType`
+
+`SlidingWindowChunkSplitter` now propagates:
+
+- `sectionTitle`
+- `sectionType`
+
+`StructureAwareChunkSplitter` now groups by parser-provided section metadata instead of using the old garbled heading regex.
+
+### 16.5 Index Save Changes
+
+`IndexService` now:
+
+- Saves `chunk.getSectionType()` when available.
+- Falls back to local inference only when chunk section type is empty.
+
+### 16.6 Verification
+
+Passed:
+
+- `mvn -q -DskipTests compile`

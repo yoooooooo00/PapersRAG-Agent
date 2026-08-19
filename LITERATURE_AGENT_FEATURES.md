@@ -304,3 +304,14 @@ Completed PDF-only parser refactor:
 - Non-PDF test resources were removed, leaving PDF parser coverage only.
 
 The QA module was not changed in this pass.
+
+Updated: 2026-08-19
+
+Completed PDF academic section parsing pass:
+
+- Added `AcademicSectionDetector`.
+- PDF parsing now detects common academic section types.
+- Page and chunk metadata now carry `sectionType`.
+- Indexing now saves parser-provided `sectionType` before falling back to inference.
+
+The QA module was not changed in this pass.
