@@ -15,12 +15,16 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Parses academic PDF files into page text with lightweight section metadata.
+ * Parses academic PDF files into page text with lightweight section and content metadata.
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class PdfParser implements DocumentParser {
+    private static final String CONTENT_TEXT = "TEXT";
+    private static final String CONTENT_TABLE = "TABLE";
+    private static final String CONTENT_MIXED = "MIXED";
+
     private final AcademicSectionDetector sectionDetector;
 
     @Value("${rag.parser.pdf.crop-header-points:60}")
@@ -44,7 +48,8 @@ public class PdfParser implements DocumentParser {
 
             for (int pageNum = 1; pageNum <= totalPages; pageNum++) {
                 try {
-                    String text = cleanText(extractBodyText(document.getPage(pageNum - 1)));
+                    String rawText = extractBodyText(document.getPage(pageNum - 1));
+                    String text = cleanText(rawText);
                     if (text.isBlank()) {
                         log.debug("[PdfParser] Empty text page skipped fileName={} page={}", fileName, pageNum);
                         continue;
@@ -56,11 +61,13 @@ public class PdfParser implements DocumentParser {
                         currentSectionType = match.sectionType();
                     }
 
+                    String normalizedText = normalizeTableRuns(cleanTextPreservingColumns(rawText));
                     pages.add(ParseResult.PageContent.builder()
                             .pageNum(pageNum)
-                            .text(text)
+                            .text(normalizedText)
                             .sectionTitle(currentSectionTitle)
                             .sectionType(currentSectionType)
+                            .contentType(resolvePageContentType(normalizedText))
                             .build());
                 } catch (Exception e) {
                     log.warn("[PdfParser] Failed to parse page fileName={} page={} reason={}",
@@ -110,10 +117,134 @@ public class PdfParser implements DocumentParser {
         return stripper.getTextForRegion("body");
     }
 
+    private String normalizeTableRuns(String text) {
+        String[] lines = text.split("\\R", -1);
+        StringBuilder output = new StringBuilder();
+        List<List<String>> tableRows = new ArrayList<>();
+
+        for (String line : lines) {
+            List<String> row = parseTableRow(line);
+            if (row.size() >= 2) {
+                tableRows.add(row);
+                continue;
+            }
+
+            flushTable(output, tableRows);
+            if (!line.isBlank()) {
+                output.append(line.strip()).append('\n');
+            } else if (!output.isEmpty() && output.charAt(output.length() - 1) != '\n') {
+                output.append('\n');
+            }
+        }
+        flushTable(output, tableRows);
+        return cleanText(output.toString());
+    }
+
+    private void flushTable(StringBuilder output, List<List<String>> tableRows) {
+        if (tableRows.isEmpty()) {
+            return;
+        }
+        if (tableRows.size() < 2) {
+            for (List<String> row : tableRows) {
+                output.append(String.join(" ", row)).append('\n');
+            }
+            tableRows.clear();
+            return;
+        }
+
+        int columnCount = tableRows.stream().mapToInt(List::size).max().orElse(0);
+        if (columnCount < 2) {
+            tableRows.clear();
+            return;
+        }
+
+        output.append("[TABLE]\n");
+        appendMarkdownRow(output, tableRows.get(0), columnCount);
+        appendSeparatorRow(output, columnCount);
+        for (int i = 1; i < tableRows.size(); i++) {
+            appendMarkdownRow(output, tableRows.get(i), columnCount);
+        }
+        output.append("[/TABLE]\n");
+        tableRows.clear();
+    }
+
+    private List<String> parseTableRow(String line) {
+        List<String> cells = new ArrayList<>();
+        String stripped = line == null ? "" : line.strip();
+        if (stripped.length() < 8 || sectionDetector.detect(stripped).sectionType() != null) {
+            return cells;
+        }
+        if (stripped.startsWith("|") && stripped.endsWith("|") && stripped.indexOf('|', 1) > 0) {
+            for (String cell : stripped.split("\\|")) {
+                addCell(cells, cell);
+            }
+            return cells;
+        }
+        if (!hasTableSignal(stripped)) {
+            return cells;
+        }
+        for (String cell : stripped.split("\\t+| {2,}")) {
+            addCell(cells, cell);
+        }
+        return cells;
+    }
+
+    private boolean hasTableSignal(String line) {
+        int wideSpaces = 0;
+        for (int i = 0; i < line.length() - 1; i++) {
+            if (line.charAt(i) == ' ' && line.charAt(i + 1) == ' ') {
+                wideSpaces++;
+            }
+        }
+        boolean hasNumber = line.matches(".*\\d.*");
+        boolean hasMultipleColumns = wideSpaces >= 1 || line.contains("\t");
+        return hasMultipleColumns && (hasNumber || line.matches(".*[A-Za-z].*[A-Za-z].*"));
+    }
+
+    private void addCell(List<String> cells, String rawCell) {
+        String cell = rawCell == null ? "" : rawCell.strip();
+        if (!cell.isBlank()) {
+            cells.add(cell.replace("|", "/"));
+        }
+    }
+
+    private void appendMarkdownRow(StringBuilder output, List<String> row, int columnCount) {
+        output.append('|');
+        for (int i = 0; i < columnCount; i++) {
+            String value = i < row.size() ? row.get(i) : "";
+            output.append(' ').append(value).append(' ').append('|');
+        }
+        output.append('\n');
+    }
+
+    private void appendSeparatorRow(StringBuilder output, int columnCount) {
+        output.append('|');
+        for (int i = 0; i < columnCount; i++) {
+            output.append(" --- |");
+        }
+        output.append('\n');
+    }
+
+    private String resolvePageContentType(String text) {
+        if (text == null || !text.contains("[TABLE]")) {
+            return CONTENT_TEXT;
+        }
+        String withoutTables = text.replaceAll("(?s)\\[TABLE].*?\\[/TABLE]", "").strip();
+        return withoutTables.isBlank() ? CONTENT_TABLE : CONTENT_MIXED;
+    }
+
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(value, max));
     }
 
+    private String cleanTextPreservingColumns(String raw) {
+        if (raw == null) return "";
+        return raw
+                .replaceAll("\\r\\n", "\n")
+                .replaceAll("\\r", "\n")
+                .replaceAll("\\n{3,}", "\n\n")
+                .strip();
+    }
     private String cleanText(String raw) {
         if (raw == null) return "";
         return raw
@@ -132,6 +263,9 @@ public class PdfParser implements DocumentParser {
             String line = rawLine.strip();
             if (line.isBlank()) {
                 if (!candidates.isEmpty()) break;
+                continue;
+            }
+            if (line.equals("[TABLE]") || line.equals("[/TABLE]") || line.startsWith("|")) {
                 continue;
             }
             if (sectionDetector.detect(line).sectionType() != null) {

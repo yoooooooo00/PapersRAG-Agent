@@ -326,3 +326,22 @@ Completed PDF metadata extraction pass:
 - User-provided metadata is preserved; title is replaced only when it still looks like the uploaded file name or an untitled placeholder.
 
 The QA module was not changed in this pass.
+
+Updated: 2026-08-19
+
+Completed PDF table preservation pass:
+
+- PDF parsing now detects table-like row groups and preserves them as Markdown tables.
+- Preserved tables are wrapped with `[TABLE]` and `[/TABLE]` markers.
+- Page, chunk, and database metadata now carry `contentType`.
+- Indexed chunks can now be filtered as `TEXT` or `TABLE` later.
+- This pass keeps original table evidence and does not generate LLM table summaries yet.
+
+Manual SQL for an existing database:
+
+```sql
+ALTER TABLE kb_doc_chunk ADD COLUMN IF NOT EXISTS content_type VARCHAR(50);
+CREATE INDEX IF NOT EXISTS idx_chunk_content_type ON kb_doc_chunk (content_type);
+```
+
+The QA module was not changed in this pass.

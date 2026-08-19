@@ -32,6 +32,7 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
                         .pageNum(page.getPageNum())
                         .sectionTitle(page.getSectionTitle())
                         .sectionType(page.getSectionType())
+                        .contentType(resolveContentType(chunkText, page.getContentType()))
                         .estimatedTokens(estimateTokens(chunkText))
                         .build());
             }
@@ -43,6 +44,16 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
                         .mapToInt(c -> c.getContent().length()).average().orElse(0));
 
         return chunks;
+    }
+
+    private String resolveContentType(String text, String pageContentType) {
+        if (text != null && text.contains("[TABLE]")) {
+            return "TABLE";
+        }
+        if (pageContentType != null && !pageContentType.isBlank() && !"MIXED".equals(pageContentType)) {
+            return pageContentType;
+        }
+        return "TEXT";
     }
 
     private List<String> splitText(String text, int chunkSize, int overlap) {

@@ -48,6 +48,9 @@ public class DocChunk {
     @Column(name = "section_type", length = 50)
     private String sectionType;
 
+    @Column(name = "content_type", length = 50)
+    private String contentType;
+
     @Column(name = "token_count", nullable = false)
     private Integer tokenCount = 0;
 

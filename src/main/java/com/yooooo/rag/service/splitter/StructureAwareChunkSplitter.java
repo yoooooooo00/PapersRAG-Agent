@@ -29,6 +29,7 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                         .pageNum(section.pageNum())
                         .sectionTitle(section.title())
                         .sectionType(section.sectionType())
+                        .contentType(resolveContentType(section.text(), section.contentType()))
                         .estimatedTokens(estimateTokens(section.text()))
                         .build());
                 continue;
@@ -41,6 +42,7 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                             .text(section.text())
                             .sectionTitle(section.title())
                             .sectionType(section.sectionType())
+                            .contentType(section.contentType())
                             .build()))
                     .totalPages(1)
                     .build();
@@ -50,6 +52,7 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                 sub.setChunkIndex(chunkIndex++);
                 if (sub.getSectionTitle() == null) sub.setSectionTitle(section.title());
                 if (sub.getSectionType() == null) sub.setSectionType(section.sectionType());
+                if (sub.getContentType() == null) sub.setContentType(resolveContentType(sub.getContent(), section.contentType()));
                 chunks.add(sub);
             }
         }
@@ -62,6 +65,7 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         StringBuilder current = new StringBuilder();
         String currentTitle = null;
         String currentSectionType = null;
+        String currentContentType = null;
         int currentPage = 1;
 
         for (ParseResult.PageContent page : parseResult.getPages()) {
@@ -75,13 +79,14 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                     || !Objects.equals(currentTitle, page.getSectionTitle()));
 
             if (sectionChanged) {
-                sections.add(new TextSection(currentTitle, currentSectionType, current.toString().strip(), currentPage));
+                sections.add(new TextSection(currentTitle, currentSectionType, currentContentType, current.toString().strip(), currentPage));
                 current = new StringBuilder();
             }
 
             if (current.length() == 0) {
                 currentTitle = page.getSectionTitle();
                 currentSectionType = page.getSectionType();
+                currentContentType = page.getContentType();
                 currentPage = page.getPageNum();
             }
 
@@ -89,10 +94,20 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         }
 
         if (!current.isEmpty()) {
-            sections.add(new TextSection(currentTitle, currentSectionType, current.toString().strip(), currentPage));
+            sections.add(new TextSection(currentTitle, currentSectionType, currentContentType, current.toString().strip(), currentPage));
         }
 
         return sections;
+    }
+
+    private String resolveContentType(String text, String fallback) {
+        if (text != null && text.contains("[TABLE]")) {
+            return "TABLE";
+        }
+        if (fallback != null && !fallback.isBlank() && !"MIXED".equals(fallback)) {
+            return fallback;
+        }
+        return "TEXT";
     }
 
     private boolean hasSectionMetadata(ParseResult.PageContent page) {
@@ -110,5 +125,5 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         return (int) (chinese * 1.5 + other * 0.3);
     }
 
-    record TextSection(String title, String sectionType, String text, int pageNum) {}
+    record TextSection(String title, String sectionType, String contentType, String text, int pageNum) {}
 }

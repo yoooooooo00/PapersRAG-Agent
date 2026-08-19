@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS kb_doc_chunk (
     page_num INT,
     section_title VARCHAR(500),
     section_type VARCHAR(50),
+    content_type VARCHAR(50),
     token_count INT NOT NULL DEFAULT 0,
     doc_version INT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -81,6 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_chunk_kb_id ON kb_doc_chunk (kb_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_doc_id ON kb_doc_chunk (doc_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_paper_id ON kb_doc_chunk (paper_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_section_type ON kb_doc_chunk (section_type);
+CREATE INDEX IF NOT EXISTS idx_chunk_content_type ON kb_doc_chunk (content_type);
 
 CREATE OR REPLACE FUNCTION update_chunk_tsv()
 RETURNS TRIGGER AS $$

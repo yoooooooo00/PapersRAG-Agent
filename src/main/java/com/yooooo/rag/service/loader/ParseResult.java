@@ -26,6 +26,7 @@ public class ParseResult {
         private String text;
         private String sectionTitle;
         private String sectionType;
+        private String contentType;
     }
 
     public static ParseResult failure(String errorMsg) {

@@ -1391,3 +1391,103 @@ Current strategy:
 Passed:
 
 - `mvn -q -DskipTests compile`
+
+## 18. PDF Table Preservation
+
+### 18.1 Scope
+
+Changed:
+
+- PDF parsing output.
+- ParseResult page metadata.
+- ChunkResult metadata.
+- DocChunk entity/schema.
+- Index save behavior.
+
+Not changed:
+
+- QA endpoints.
+- Retrieval ranking.
+- Prompt templates.
+- LLM-generated table summaries.
+
+### 18.2 Table Strategy
+
+Current strategy preserves table evidence first:
+
+- Detect consecutive table-like text rows from PDFBox extracted text.
+- Convert detected rows into Markdown-style tables.
+- Wrap preserved tables with `[TABLE]` and `[/TABLE]` markers.
+- Save chunk `contentType` as `TABLE` when the chunk contains a table marker.
+- Save regular text chunks as `TEXT`.
+
+This pass does not ask an LLM to rewrite tables into prose. LLM table summaries can be added later as separate `TABLE_SUMMARY` chunks linked back to the original table chunk.
+
+### 18.3 Data Model Changes
+
+`ParseResult.PageContent` now includes:
+
+- `contentType`
+
+`ChunkResult` now includes:
+
+- `contentType`
+
+`DocChunk` now includes:
+
+- `contentType`, mapped to `kb_doc_chunk.content_type`
+
+Supported content types in this pass:
+
+- `TEXT`
+- `TABLE`
+- `MIXED` at page level before chunk classification
+
+### 18.4 Parser Changes
+
+`PdfParser` now:
+
+- Extracts body text as before.
+- Detects academic section metadata from the original page text.
+- Normalizes consecutive table-like lines into Markdown tables.
+- Skips table rows when extracting the document title.
+
+Table detection is heuristic. It works best for text-based PDFs where table columns are separated by tabs or repeated spaces. Scanned PDFs still need OCR before parsing.
+
+### 18.5 Splitter And Index Changes
+
+`SlidingWindowChunkSplitter` now:
+
+- Propagates page `contentType` to chunk metadata.
+- Marks chunks containing `[TABLE]` as `TABLE`.
+
+`StructureAwareChunkSplitter` now:
+
+- Preserves `contentType` while grouping by academic sections.
+- Passes section content type into fallback sliding-window splitting.
+
+`IndexService` now:
+
+- Saves `chunk.getContentType()` into `DocChunk.contentType`.
+- Falls back to `TABLE` when the chunk content contains `[TABLE]`.
+- Falls back to `TEXT` otherwise.
+
+### 18.6 Database Change For Existing Databases
+
+Run this on an existing database before uploading new PDFs with table preservation:
+
+```sql
+ALTER TABLE kb_doc_chunk ADD COLUMN IF NOT EXISTS content_type VARCHAR(50);
+CREATE INDEX IF NOT EXISTS idx_chunk_content_type ON kb_doc_chunk (content_type);
+```
+
+The following files already include this field for fresh initialization:
+
+- `src/main/resources/schema.sql`
+- `database_init_literature_agent.sql`
+
+### 18.7 Verification
+
+Passed:
+
+- `mvn -q -DskipTests compile`

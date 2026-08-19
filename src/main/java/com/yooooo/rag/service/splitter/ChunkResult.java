@@ -19,5 +19,7 @@ public class ChunkResult {
 
     private String sectionType;
 
+    private String contentType;
+
     private int estimatedTokens;
 }

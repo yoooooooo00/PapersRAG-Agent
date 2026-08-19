@@ -141,6 +141,7 @@ public class IndexService {
                 docChunk.setPageNum(chunk.getPageNum());
                 docChunk.setSectionTitle(chunk.getSectionTitle());
                 docChunk.setSectionType(resolveSectionType(chunk));
+                docChunk.setContentType(resolveContentType(chunk));
                 docChunk.setTokenCount(chunk.getEstimatedTokens());
                 docChunk.setDocVersion(doc.getVersion());
                 docChunks.add(docChunk);
@@ -168,6 +169,17 @@ public class IndexService {
     }
 
 
+
+    private String resolveContentType(ChunkResult chunk) {
+        if (chunk.getContentType() != null && !chunk.getContentType().isBlank()) {
+            return chunk.getContentType();
+        }
+        String content = chunk.getContent();
+        if (content != null && content.contains("[TABLE]")) {
+            return "TABLE";
+        }
+        return "TEXT";
+    }
 
     private String resolveSectionType(ChunkResult chunk) {
         if (chunk.getSectionType() != null && !chunk.getSectionType().isBlank()) {
