@@ -160,21 +160,18 @@ public class KnowledgeBaseService {
     }
 
     private void validateFileType(String fileName) {
-        if (fileName == null) throw new RuntimeException("File name must not be empty");
-        String lower = fileName.toLowerCase();
-        if (!lower.endsWith(".pdf") && !lower.endsWith(".docx") &&
-            !lower.endsWith(".md")  && !lower.endsWith(".txt")) {
-            throw new RuntimeException("Unsupported file type. Supported: PDF, DOCX, MD, TXT");
+        if (fileName == null || fileName.isBlank()) {
+            throw new RuntimeException("File name must not be empty");
+        }
+        if (!fileName.toLowerCase().endsWith(".pdf")) {
+            throw new RuntimeException("Unsupported file type. Only PDF is supported.");
         }
     }
 
     private String detectFileType(String fileName) {
         if (fileName == null) return "UNKNOWN";
         String lower = fileName.toLowerCase();
-        if (lower.endsWith(".pdf"))  return "PDF";
-        if (lower.endsWith(".docx")) return "DOCX";
-        if (lower.endsWith(".md"))   return "MD";
-        if (lower.endsWith(".txt"))  return "TXT";
+        if (lower.endsWith(".pdf")) return "PDF";
         return "UNKNOWN";
     }
 }

@@ -4,50 +4,43 @@ import com.yooooo.rag.service.loader.DocumentParser;
 import com.yooooo.rag.service.loader.ParseResult;
 import java.io.InputStream;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * 根据文件类型选择合适解析器，把文档读取成结构化文本。
+ * Loads literature documents. The project currently supports PDF only.
  */
 @Service
 @Slf4j
 public class DocumentLoaderService {
-    private final Map<String, DocumentParser> parsers;
+    private final DocumentParser pdfParser;
 
     public DocumentLoaderService(List<DocumentParser> parserList) {
-        this.parsers = parserList.stream()
-                .collect(Collectors.toMap(
-                        p -> p.supportedType().toUpperCase(),
-                        Function.identity()
-                ));
-        log.info("已加载文档解析器：{}", parsers.keySet());
+        this.pdfParser = parserList.stream()
+                .filter(parser -> "PDF".equalsIgnoreCase(parser.supportedType()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("PDF parser is not configured"));
+        log.info("Loaded PDF document parser");
     }
 
     public ParseResult load(InputStream inputStream, String fileName) {
-        String fileType = detectFileType(fileName).toUpperCase();
-        DocumentParser parser = parsers.get(fileType);
-
-        if (parser == null) {
-            log.warn("[文档加载] 不支持的文件类型：{}，文件：{}", fileType, fileName);
-            return ParseResult.failure("不支持的文件类型：" + fileType +
-                    "，目前支持：PDF / DOCX / MD / TXT");
+        String fileType = detectFileType(fileName);
+        if (!"PDF".equals(fileType)) {
+            log.warn("[DocumentLoader] Unsupported file type={} fileName={}", fileType, fileName);
+            return ParseResult.failure("Unsupported file type: " + fileType + ". Only PDF is supported.");
         }
 
-        log.info("[文档加载] 开始解析：fileName={}，type={}", fileName, fileType);
+        log.info("[DocumentLoader] Start parsing PDF fileName={}", fileName);
         long start = System.currentTimeMillis();
 
-        ParseResult result = parser.parse(inputStream, fileName);
+        ParseResult result = pdfParser.parse(inputStream, fileName);
 
         long elapsed = System.currentTimeMillis() - start;
         if (result.isSuccess()) {
-            log.info("[文档加载] 解析完成：fileName={}，页数={}，耗时={}ms",
+            log.info("[DocumentLoader] Parsed PDF fileName={} pages={} elapsed={}ms",
                     fileName, result.getTotalPages(), elapsed);
         } else {
-            log.warn("[文档加载] 解析失败：fileName={}，原因={}",
+            log.warn("[DocumentLoader] Failed to parse PDF fileName={} reason={}",
                     fileName, result.getErrorMsg());
         }
 
@@ -55,20 +48,17 @@ public class DocumentLoaderService {
     }
 
     private String detectFileType(String fileName) {
-        if (fileName == null) {
+        if (fileName == null || fileName.isBlank()) {
             return "UNKNOWN";
+        }
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".pdf")) {
+            return "PDF";
         }
         int dotIndex = fileName.lastIndexOf('.');
-        if (dotIndex < 0) {
+        if (dotIndex < 0 || dotIndex == fileName.length() - 1) {
             return "UNKNOWN";
         }
-        String ext = fileName.substring(dotIndex + 1).toLowerCase();
-        return switch (ext) {
-            case "pdf" -> "PDF";
-            case "docx" -> "DOCX";
-            case "md", "markdown" -> "MD";
-            case "txt" -> "TXT";
-            default -> ext.toUpperCase();
-        };
+        return fileName.substring(dotIndex + 1).toUpperCase();
     }
 }

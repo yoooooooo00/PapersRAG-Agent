@@ -292,3 +292,15 @@ Completed focused ingestion/indexing refactor:
 - Generic document upload remains compatible with the original RAG behavior.
 
 The QA module has not been refactored in this pass.
+
+Updated: 2026-08-19
+
+Completed PDF-only parser refactor:
+
+- Removed DOCX, Markdown, and TXT parsers.
+- Removed DOCX/Markdown parser dependencies.
+- Upload validation now accepts only PDF files.
+- `DocumentLoaderService` now routes only PDF documents.
+- Non-PDF test resources were removed, leaving PDF parser coverage only.
+
+The QA module was not changed in this pass.

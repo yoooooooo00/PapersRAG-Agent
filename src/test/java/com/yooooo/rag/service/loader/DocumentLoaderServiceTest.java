@@ -8,9 +8,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ClassPathResource;
 import static org.assertj.core.api.Assertions.assertThat;
-/**
- * 验证文档加载服务可以解析测试文档。
- */
 
 @SpringBootTest
 class DocumentLoaderServiceTest {
@@ -21,19 +18,6 @@ class DocumentLoaderServiceTest {
         return result.getPages().stream()
                 .map(ParseResult.PageContent::getText)
                 .collect(Collectors.joining("\n"));
-    }
-
-    @Test
-    void parseTxtFile() throws Exception {
-        ClassPathResource resource = new ClassPathResource("test-docs/hr-handbook.txt");
-        try (InputStream is = resource.getInputStream()) {
-            ParseResult result = loaderService.load(is, "hr-handbook.txt");
-            String text = extractText(result);
-
-            assertThat(result.isSuccess()).isTrue();
-            assertThat(text).isNotBlank();
-            assertThat(text).contains("v2.3");
-        }
     }
 
     @Test
@@ -50,40 +34,11 @@ class DocumentLoaderServiceTest {
     }
 
     @Test
-    void parseDocx() throws Exception {
-        ClassPathResource resource = new ClassPathResource("test-docs/policy.docx");
-        if (!resource.exists()) {
-            return;
-        }
-        try (InputStream is = resource.getInputStream()) {
-            ParseResult result = loaderService.load(is, "policy.docx");
-            String text = extractText(result);
-
-            assertThat(result.isSuccess()).isTrue();
-            assertThat(text).isNotBlank();
-            assertThat(result.getPages()).isNotEmpty();
-        }
-    }
-
-    @Test
-    void parseMd() throws Exception {
-        ClassPathResource resource = new ClassPathResource("test-docs/hr-handbook.md");
-        try (InputStream is = resource.getInputStream()) {
-            ParseResult result = loaderService.load(is, "hr-handbook.md");
-            String text = extractText(result);
-
-            assertThat(result.isSuccess()).isTrue();
-            assertThat(text).isNotBlank();
-            assertThat(result.getPages()).isNotEmpty();
-        }
-    }
-
-    @Test
     void unsupportedTypeReturnsFailure() {
         InputStream emptyStream = InputStream.nullInputStream();
-        ParseResult result = loaderService.load(emptyStream, "test.xyz");
+        ParseResult result = loaderService.load(emptyStream, "test.txt");
 
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getErrorMsg()).isNotBlank();
+        assertThat(result.getErrorMsg()).contains("Only PDF is supported");
     }
 }

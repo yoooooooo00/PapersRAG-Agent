@@ -1127,3 +1127,96 @@ After this ingestion module is stable, the next isolated module should be paper-
 - Add `LiteratureQueryRequest`.
 - Add `/api/v1/literature/query`.
 - Keep existing `/api/v1/rag/query` unchanged during the first pass.
+
+## 15. PDF-Only Parser Refactor
+
+Updated: 2026-08-19
+
+This pass only changed the document parsing/upload file-type module.
+
+### 15.1 Scope
+
+Changed:
+
+- Document parser registration/loading.
+- Upload file type validation.
+- Parser dependencies.
+- Parser tests and test resources.
+
+Not changed:
+
+- QA pipeline.
+- Retrieval logic.
+- Chunk splitting strategy.
+- Paper-scoped querying.
+
+### 15.2 Removed Parsers
+
+Removed from `src/main/java/com/yooooo/rag/service/loader`:
+
+- `DocxParser`
+- `MarkdownParser`
+- `TxtParser`
+
+Remaining parser files:
+
+- `DocumentParser`
+- `ParseResult`
+- `PdfParser`
+
+### 15.3 Dependency Cleanup
+
+Removed from `pom.xml`:
+
+- `org.apache.poi:poi-ooxml`
+- `com.vladsch.flexmark:flexmark-all`
+
+Kept:
+
+- `org.apache.pdfbox:pdfbox`
+
+### 15.4 Runtime Behavior
+
+`DocumentLoaderService` now:
+
+- Requires a configured PDF parser.
+- Accepts only `.pdf` file names.
+- Returns parse failure for any non-PDF file.
+
+`KnowledgeBaseService` now:
+
+- Allows upload only when the file name ends with `.pdf`.
+- Stores uploaded files with `fileType = PDF`.
+- Rejects DOCX, Markdown, TXT, and unknown extensions.
+
+### 15.5 Test Cleanup
+
+`DocumentLoaderServiceTest` now covers:
+
+- PDF parsing.
+- Non-PDF rejection.
+
+Removed non-PDF test resources:
+
+- Markdown test document.
+- TXT test documents.
+
+Kept PDF test resources:
+
+- `src/main/resources/test-docs/policy.pdf`
+- `src/test/resources/test-docs/policy.pdf`
+
+### 15.6 Verification
+
+Passed:
+
+- `mvn -q -DskipTests compile`
+
+Attempted:
+
+- `mvn -q "-Dtest=DocumentLoaderServiceTest,ChunkServiceTest" test`
+
+Result:
+
+- Test execution failed while loading Spring ApplicationContext because the local test run could not obtain a JDBC connection to PostgreSQL.
+- The failure is environmental/database connectivity related, not a Java compilation error from the PDF-only parser refactor.
