@@ -315,3 +315,14 @@ Completed PDF academic section parsing pass:
 - Indexing now saves parser-provided `sectionType` before falling back to inference.
 
 The QA module was not changed in this pass.
+
+Updated: 2026-08-19
+
+Completed PDF metadata extraction pass:
+
+- Added `PaperMetadataExtractor` for lightweight metadata extraction from parsed PDFs.
+- Indexing now backfills missing `Paper` fields after parsing and before chunking.
+- Current extracted fields: title, abstract, keywords, DOI, arXiv ID, year, and simple author candidates.
+- User-provided metadata is preserved; title is replaced only when it still looks like the uploaded file name or an untitled placeholder.
+
+The QA module was not changed in this pass.

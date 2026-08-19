@@ -12,6 +12,7 @@ import com.yooooo.rag.security.UserContext;
 import com.yooooo.rag.service.document.DocumentLoaderService;
 import com.yooooo.rag.service.embedding.EmbeddingService;
 import com.yooooo.rag.service.loader.ParseResult;
+import com.yooooo.rag.service.paper.PaperMetadataExtractor;
 import com.yooooo.rag.service.splitter.ChunkResult;
 import com.yooooo.rag.service.splitter.ChunkService;
 import com.yooooo.rag.service.storage.MinioStorageService;
@@ -39,6 +40,7 @@ public class IndexService {
     private final MinioStorageService minioStorageService;
     private final IndexTaskLauncher taskLauncher;
     private final PaperRepository paperRepository;
+    private final PaperMetadataExtractor paperMetadataExtractor;
 
     public void submitIndexTask(Long docId, String textContent) {
         IndexTask task = new IndexTask();
@@ -110,6 +112,8 @@ public class IndexService {
                 throw new RuntimeException("文档解析失败：" + parseResult.getErrorMsg());
             }
 
+            enrichPaperMetadata(docId, doc.getFileName(), parseResult);
+
             List<ChunkResult> chunks = chunkService.chunk(parseResult);
             if (chunks.isEmpty()) {
                 throw new RuntimeException("分块结果为空，文档可能无有效文本内容");
@@ -175,6 +179,15 @@ public class IndexService {
         return paperRepository.findFirstByDocIdAndIsDeletedFalse(docId)
                 .map(Paper::getId)
                 .orElse(null);
+    }
+
+    private void enrichPaperMetadata(Long docId, String fileName, ParseResult parseResult) {
+        paperRepository.findFirstByDocIdAndIsDeletedFalse(docId).ifPresent(paper -> {
+            if (paperMetadataExtractor.fillMissingMetadata(paper, parseResult, fileName)) {
+                paperRepository.save(paper);
+                log.info("[IndexService] enriched paper metadata: paperId={} docId={}", paper.getId(), docId);
+            }
+        });
     }
 
     private String inferSectionType(String sectionTitle, String content) {

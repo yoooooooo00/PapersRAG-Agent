@@ -1307,3 +1307,87 @@ Supported section types:
 Passed:
 
 - `mvn -q -DskipTests compile`
+
+## 17. PDF Paper Metadata Extraction
+
+### 17.1 Scope
+
+Changed:
+
+- PDF upload/indexing pipeline metadata enrichment.
+- Paper record backfill after PDF parsing succeeds.
+
+Not changed:
+
+- QA endpoints.
+- Retrieval queries.
+- Prompt modes.
+- Chunk splitting strategy.
+- Database schema.
+
+### 17.2 New Component
+
+Added:
+
+- `PaperMetadataExtractor`
+
+Package:
+
+- `com.yooooo.rag.service.paper`
+
+Purpose:
+
+- Extract lightweight paper metadata from parsed PDF text.
+- Backfill missing `Paper` fields during indexing.
+- Preserve user-provided metadata whenever possible.
+
+Input:
+
+- `Paper paper`
+- `ParseResult parseResult`
+- `String fileName`
+
+Output:
+
+- Mutates the `Paper` object when missing fields can be inferred.
+- Returns `true` when at least one field changed.
+
+Fields currently inferred:
+
+- `title`
+- `abstractText`
+- `keywords`
+- `doi`
+- `arxivId`
+- `year`
+- `authors`
+
+Current strategy:
+
+- Title uses `ParseResult.title` only when the current title is blank, untitled, or matches the uploaded PDF file name.
+- Abstract uses parser section metadata first, then falls back to text regex from `Abstract` to `Keywords` or `Introduction`.
+- Keywords are extracted from common English `Keywords`, `Key words`, or `Index Terms` lines.
+- DOI, arXiv ID, and year are extracted by conservative regex.
+- Authors are extracted heuristically from the first page between title and abstract.
+
+### 17.3 IndexService Changes
+
+`IndexService` now injects:
+
+- `PaperMetadataExtractor`
+
+`doIndex(...)` now runs after parse success and before chunking:
+
+- `enrichPaperMetadata(docId, doc.getFileName(), parseResult)`
+
+`enrichPaperMetadata(...)` behavior:
+
+- Finds the paper with `PaperRepository.findFirstByDocIdAndIsDeletedFalse(docId)`.
+- Calls `PaperMetadataExtractor.fillMissingMetadata(...)`.
+- Saves the paper only when metadata changed.
+
+### 17.4 Verification
+
+Passed:
+
+- `mvn -q -DskipTests compile`
