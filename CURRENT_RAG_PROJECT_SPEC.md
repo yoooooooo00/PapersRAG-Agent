@@ -948,3 +948,62 @@ Add paper upload flow:
 - Upload PDF through existing `KnowledgeBaseService.uploadDocument`.
 - Create a `Paper` record bound to the created `KbDocument`.
 - Use file name as initial paper title when metadata is not provided.
+
+### 13.8 Paper Upload Endpoint
+
+Updated: 2026-08-19
+
+A literature-oriented upload wrapper has been added.
+
+Endpoint:
+
+- `POST /api/v1/papers/upload`
+
+Request type:
+
+- `multipart/form-data`
+
+Required form field:
+
+- `file`: uploaded paper file. The current document loader supports PDF, DOCX, MD, and TXT through the existing RAG pipeline.
+
+Optional form fields:
+
+- `kbId`: defaults to `1`.
+- `title`: defaults to the uploaded file name without extension.
+- `authors`
+- `year`
+- `venue`
+- `doi`
+- `arxivId`
+- `abstractText`
+- `keywords`
+- `bibtex`
+- `sourceUrl`
+- `readingStatus`: `UNREAD`, `READING`, `READ`, or `ARCHIVED`.
+- `rating`
+- `note`
+
+Behavior:
+
+1. Reuses `KnowledgeBaseService.uploadDocument` to upload the file, create `KbDocument`, store the original file in MinIO, and submit an indexing task.
+2. Creates a `Paper` row bound to the generated `KbDocument` through `paper.docId`.
+3. Stores the MinIO path in `paper.pdfUrl` for now.
+4. Returns `PaperUploadResponse` with `paperId`, `docId`, `kbId`, `title`, `fileName`, `documentStatus`, and message.
+
+Example curl:
+
+```bash
+curl -X POST "http://localhost:8080/api/v1/papers/upload" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/paper.pdf" \
+  -F "title=Example Paper" \
+  -F "authors=Author A; Author B" \
+  -F "year=2026" \
+  -F "venue=arXiv" \
+  -F "readingStatus=UNREAD"
+```
+
+Verification:
+
+- `mvn -q -DskipTests compile` passed after adding this endpoint.

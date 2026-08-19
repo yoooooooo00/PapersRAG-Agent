@@ -6,10 +6,12 @@ import com.yooooo.rag.dto.PaperNoteVO;
 import com.yooooo.rag.dto.PaperRelationRequest;
 import com.yooooo.rag.dto.PaperRelationVO;
 import com.yooooo.rag.dto.PaperUpdateRequest;
+import com.yooooo.rag.dto.PaperUploadResponse;
 import com.yooooo.rag.dto.PaperVO;
 import com.yooooo.rag.entity.Paper;
 import com.yooooo.rag.entity.PaperNote;
 import com.yooooo.rag.entity.PaperRelation;
+import com.yooooo.rag.entity.KbDocument;
 import com.yooooo.rag.exception.BizException;
 import com.yooooo.rag.repository.KbDocumentRepository;
 import com.yooooo.rag.repository.KnowledgeBaseRepository;
@@ -17,11 +19,13 @@ import com.yooooo.rag.repository.PaperNoteRepository;
 import com.yooooo.rag.repository.PaperRelationRepository;
 import com.yooooo.rag.repository.PaperRepository;
 import com.yooooo.rag.security.UserContext;
+import com.yooooo.rag.service.kb.KnowledgeBaseService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @RequiredArgsConstructor
@@ -32,7 +36,64 @@ public class PaperService {
     private final PaperRelationRepository relationRepository;
     private final KnowledgeBaseRepository kbRepository;
     private final KbDocumentRepository documentRepository;
+    private final KnowledgeBaseService knowledgeBaseService;
 
+
+    @Transactional
+    public PaperUploadResponse uploadPaper(
+            Long kbId,
+            MultipartFile file,
+            String title,
+            String authors,
+            Integer year,
+            String venue,
+            String doi,
+            String arxivId,
+            String abstractText,
+            String keywords,
+            String bibtex,
+            String sourceUrl,
+            String readingStatus,
+            Integer rating,
+            String note) {
+        Long targetKbId = kbId != null ? kbId : 1L;
+        validateKb(targetKbId);
+        if (file == null || file.isEmpty()) {
+            throw BizException.badRequest("Paper file must not be empty");
+        }
+
+        KbDocument doc = knowledgeBaseService.uploadDocument(targetKbId, file);
+        Paper paper = new Paper();
+        paper.setKbId(targetKbId);
+        paper.setDocId(doc.getId());
+        paper.setTitle(resolvePaperTitle(title, doc.getFileName()));
+        paper.setAuthors(authors);
+        paper.setYear(year);
+        paper.setVenue(venue);
+        paper.setDoi(doi);
+        paper.setArxivId(arxivId);
+        paper.setAbstractText(abstractText);
+        paper.setKeywords(keywords);
+        paper.setBibtex(bibtex);
+        paper.setSourceUrl(sourceUrl);
+        paper.setPdfUrl(doc.getMinioPath());
+        paper.setReadingStatus(parseReadingStatusOrDefault(readingStatus, Paper.ReadingStatus.UNREAD));
+        paper.setRating(rating);
+        paper.setNote(note);
+        paper.setCreatedBy(UserContext.getUserId());
+
+        Paper saved = paperRepository.save(paper);
+        log.info("[Paper] uploaded paperId={} docId={} fileName={}", saved.getId(), doc.getId(), doc.getFileName());
+        return PaperUploadResponse.builder()
+                .paperId(saved.getId())
+                .docId(doc.getId())
+                .kbId(targetKbId)
+                .title(saved.getTitle())
+                .fileName(doc.getFileName())
+                .documentStatus(doc.getStatus().name())
+                .message("Paper uploaded and indexing task submitted")
+                .build();
+    }
     public List<PaperVO> list(Long kbId, String status, String keyword) {
         List<Paper> papers;
         if (keyword != null && !keyword.isBlank()) {
@@ -207,6 +268,21 @@ public class PaperService {
         relationRepository.save(relation);
     }
 
+
+    private String resolvePaperTitle(String title, String fileName) {
+        if (title != null && !title.isBlank()) {
+            return title.strip();
+        }
+        if (fileName == null || fileName.isBlank()) {
+            return "Untitled Paper";
+        }
+        String normalized = fileName.strip();
+        int dotIndex = normalized.lastIndexOf('.');
+        if (dotIndex > 0) {
+            return normalized.substring(0, dotIndex);
+        }
+        return normalized;
+    }
     private Paper requirePaper(Long paperId) {
         return paperRepository.findById(paperId)
                 .filter(p -> !Boolean.TRUE.equals(p.getIsDeleted()))

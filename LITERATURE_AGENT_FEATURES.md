@@ -272,3 +272,12 @@ Completed in the first implementation pass:
 Next step:
 
 - Add PDF upload endpoint for papers and bind each uploaded file to a `Paper` record.
+
+Updated: 2026-08-19
+
+Completed upload wrapper:
+
+- Added `POST /api/v1/papers/upload`.
+- The endpoint uploads a file through the existing RAG document pipeline and automatically creates a bound `Paper` record.
+- If no title is provided, the file name without extension is used as the paper title.
+- Indexing still happens asynchronously through the existing `KbDocument` and `IndexTask` flow.
