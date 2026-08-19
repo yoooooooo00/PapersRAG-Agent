@@ -345,3 +345,15 @@ CREATE INDEX IF NOT EXISTS idx_chunk_content_type ON kb_doc_chunk (content_type)
 ```
 
 The QA module was not changed in this pass.
+
+Updated: 2026-08-19
+
+Completed vectorization enrichment pass:
+
+- Added `ChunkEmbeddingTextBuilder` to build retrieval-friendly embedding text.
+- Added a synthetic `PAPER_METADATA` indexed chunk for title/abstract/keywords context.
+- Table chunks keep their original evidence text but use richer embedding context.
+- Normal reference chunks are skipped from vectorization to reduce retrieval noise.
+- Original chunk content is still stored unchanged in `DocChunk.content`.
+
+The QA module was not changed in this pass.

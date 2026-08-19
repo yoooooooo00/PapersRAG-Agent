@@ -1491,3 +1491,82 @@ The following files already include this field for fresh initialization:
 Passed:
 
 - `mvn -q -DskipTests compile`
+
+## 19. Vectorization Enrichment
+
+### 19.1 Scope
+
+Changed:
+
+- Embedding text construction.
+- Vectorization input selection.
+- Reference chunk filtering.
+- Synthetic paper-metadata chunk generation.
+
+Not changed:
+
+- QA endpoints.
+- Retrieval ranking logic.
+- Prompt templates.
+- Original chunk evidence storage.
+
+### 19.2 New Component
+
+Added:
+
+- `ChunkEmbeddingTextBuilder`
+
+Package:
+
+- `com.yooooo.rag.service.indexing`
+
+Purpose:
+
+- Build retrieval-friendly embedding text without changing stored evidence text.
+- Generate a synthetic `PAPER_METADATA` chunk for title/abstract/keywords/DOI/arXiv/year context.
+- Skip normal reference chunks during vectorization.
+
+### 19.3 Embedding Text Strategy
+
+For each indexed chunk, the embedding text now includes lightweight context:
+
+- Paper title
+- Authors
+- Year
+- Source file
+- Section title
+- Section type
+- Page number
+- Content type
+- Original content
+
+For table chunks:
+
+- Preserve the original Markdown table content.
+- Remove `[TABLE]` markers only in the embedding text.
+
+For reference chunks:
+
+- Skip normal `REFERENCES` text chunks from vectorization.
+- Keep the original evidence in storage only if needed in future passes.
+
+For paper metadata:
+
+- Add one synthetic `PAPER_METADATA` chunk when a `Paper` record exists.
+- Use title, authors, year, venue, DOI, arXiv ID, keywords, abstract, and source file.
+
+### 19.4 Data Flow Changes
+
+`IndexService` now:
+
+- Builds `ChunkEmbeddingTextBuilder.IndexableChunk` items.
+- Embeds the builder text, not the raw chunk content.
+- Persists the original chunk content in `DocChunk.content`.
+- Persists the builder content type in `DocChunk.contentType`.
+- Persists `PAPER_METADATA` as a synthetic indexed chunk when possible.
+
+### 19.5 Verification
+
+Passed:
+
+- `mvn -q -DskipTests compile`

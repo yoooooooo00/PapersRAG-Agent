@@ -41,6 +41,7 @@ public class IndexService {
     private final IndexTaskLauncher taskLauncher;
     private final PaperRepository paperRepository;
     private final PaperMetadataExtractor paperMetadataExtractor;
+    private final ChunkEmbeddingTextBuilder chunkEmbeddingTextBuilder;
 
     public void submitIndexTask(Long docId, String textContent) {
         IndexTask task = new IndexTask();
@@ -112,25 +113,29 @@ public class IndexService {
                 throw new RuntimeException("文档解析失败：" + parseResult.getErrorMsg());
             }
 
-            enrichPaperMetadata(docId, doc.getFileName(), parseResult);
+            Paper paper = enrichPaperMetadata(docId, doc.getFileName(), parseResult);
 
             List<ChunkResult> chunks = chunkService.chunk(parseResult);
-            if (chunks.isEmpty()) {
+            List<ChunkEmbeddingTextBuilder.IndexableChunk> indexableChunks = chunkEmbeddingTextBuilder.build(paper, doc.getFileName(), chunks);
+            if (indexableChunks.isEmpty()) {
                 throw new RuntimeException("分块结果为空，文档可能无有效文本内容");
             }
-            log.info("[IndexService] docId={}，分块完成，共{}块", docId, chunks.size());
+            log.info("[IndexService] docId={}，分块完成，共{}块", docId, indexableChunks.size());
 
-            List<String> texts = chunks.stream().map(ChunkResult::getContent).toList();
+            List<String> texts = indexableChunks.stream()
+                    .map(ChunkEmbeddingTextBuilder.IndexableChunk::embeddingText)
+                    .toList();
 
             List<float[]> embeddings = embeddingService.embedBatch(texts);
 
             chunkRepository.deleteByDocIdAndDocVersionLessThan(docId, doc.getVersion());
 
             List<DocChunk> docChunks = new ArrayList<>();
-            Long paperId = resolvePaperId(docId);
+            Long paperId = paper != null ? paper.getId() : resolvePaperId(docId);
             int totalTokens = 0;
-            for (int i = 0; i < chunks.size(); i++) {
-                ChunkResult chunk = chunks.get(i);
+            for (int i = 0; i < indexableChunks.size(); i++) {
+                ChunkEmbeddingTextBuilder.IndexableChunk indexed = indexableChunks.get(i);
+                ChunkResult chunk = indexed.chunk();
                 DocChunk docChunk = new DocChunk();
                 docChunk.setDocId(docId);
                 docChunk.setKbId(doc.getKbId());
@@ -140,8 +145,8 @@ public class IndexService {
                 docChunk.setEmbedding(embeddings.get(i));
                 docChunk.setPageNum(chunk.getPageNum());
                 docChunk.setSectionTitle(chunk.getSectionTitle());
-                docChunk.setSectionType(resolveSectionType(chunk));
-                docChunk.setContentType(resolveContentType(chunk));
+                docChunk.setSectionType(chunk.getSectionType());
+                docChunk.setContentType(chunk.getContentType());
                 docChunk.setTokenCount(chunk.getEstimatedTokens());
                 docChunk.setDocVersion(doc.getVersion());
                 docChunks.add(docChunk);
@@ -151,7 +156,7 @@ public class IndexService {
             batchInsertChunks(docChunks);
 
             doc.setStatus(KbDocument.DocumentStatus.DONE);
-            doc.setChunkCount(chunks.size());
+            doc.setChunkCount(indexableChunks.size());
             doc.setTokenCount(totalTokens);
             doc.setIndexedAt(LocalDateTime.now());
             documentRepository.save(doc);
@@ -159,26 +164,13 @@ public class IndexService {
             updateTaskStatus(taskId, IndexTask.TaskStatus.DONE);
 
             log.info("[IndexService] 索引完成：docId={}，chunks={}，tokens={}",
-                    docId, chunks.size(), totalTokens);
+                    docId, indexableChunks.size(), totalTokens);
 
         } catch (Exception e) {
             log.error("[IndexService] 索引失败：docId={}，error={}", docId, e.getMessage(), e);
             markFailed(taskId, docId, e.getMessage());
             retryIfPossible(taskId, docId);
         }
-    }
-
-
-
-    private String resolveContentType(ChunkResult chunk) {
-        if (chunk.getContentType() != null && !chunk.getContentType().isBlank()) {
-            return chunk.getContentType();
-        }
-        String content = chunk.getContent();
-        if (content != null && content.contains("[TABLE]")) {
-            return "TABLE";
-        }
-        return "TEXT";
     }
 
     private String resolveSectionType(ChunkResult chunk) {
@@ -193,13 +185,13 @@ public class IndexService {
                 .orElse(null);
     }
 
-    private void enrichPaperMetadata(Long docId, String fileName, ParseResult parseResult) {
-        paperRepository.findFirstByDocIdAndIsDeletedFalse(docId).ifPresent(paper -> {
-            if (paperMetadataExtractor.fillMissingMetadata(paper, parseResult, fileName)) {
-                paperRepository.save(paper);
-                log.info("[IndexService] enriched paper metadata: paperId={} docId={}", paper.getId(), docId);
-            }
-        });
+    private Paper enrichPaperMetadata(Long docId, String fileName, ParseResult parseResult) {
+        Paper paper = paperRepository.findFirstByDocIdAndIsDeletedFalse(docId).orElse(null);
+        if (paper != null && paperMetadataExtractor.fillMissingMetadata(paper, parseResult, fileName)) {
+            paperRepository.save(paper);
+            log.info("[IndexService] enriched paper metadata: paperId={} docId={}", paper.getId(), docId);
+        }
+        return paper;
     }
 
     private String inferSectionType(String sectionTitle, String content) {
