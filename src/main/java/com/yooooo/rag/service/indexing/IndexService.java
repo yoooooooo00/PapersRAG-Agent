@@ -25,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * 执行文档索引，把文档分块、生成向量并写入数据库。
+ * Indexes documents by parsing, chunking, embedding, and writing chunks to the database.
  */
 @Service
 @RequiredArgsConstructor
@@ -85,7 +85,7 @@ public class IndexService {
 
             doIndex(taskId, docId, doc, parseResult);
         } catch (Exception e) {
-            markFailed(taskId, docId, "从MinIO读取文件失败：" + e.getMessage());
+            markFailed(taskId, docId, "Failed to read file from MinIO: " + e.getMessage());
         }
     }
 
@@ -110,7 +110,7 @@ public class IndexService {
 
         try {
             if (!parseResult.isSuccess()) {
-                throw new RuntimeException("文档解析失败：" + parseResult.getErrorMsg());
+                throw new RuntimeException("Document parsing failed: " + parseResult.getErrorMsg());
             }
 
             Paper paper = enrichPaperMetadata(docId, doc.getFileName(), parseResult);
@@ -118,9 +118,9 @@ public class IndexService {
             List<ChunkResult> chunks = chunkService.chunk(parseResult);
             List<ChunkEmbeddingTextBuilder.IndexableChunk> indexableChunks = chunkEmbeddingTextBuilder.build(paper, doc.getFileName(), chunks);
             if (indexableChunks.isEmpty()) {
-                throw new RuntimeException("分块结果为空，文档可能无有效文本内容");
+                throw new RuntimeException("Chunk result is empty; the document may contain no valid text.");
             }
-            log.info("[IndexService] docId={}，分块完成，共{}块", docId, indexableChunks.size());
+            log.info("[IndexService] docId={} chunking completed chunks={}", docId, indexableChunks.size());
 
             List<String> texts = indexableChunks.stream()
                     .map(ChunkEmbeddingTextBuilder.IndexableChunk::embeddingText)
@@ -142,6 +142,8 @@ public class IndexService {
                 docChunk.setPaperId(paperId);
                 docChunk.setChunkIndex(chunk.getChunkIndex());
                 docChunk.setContent(chunk.getContent());
+                docChunk.setRawContent(chunk.getRawContent());
+                docChunk.setTableCaption(chunk.getTableCaption());
                 docChunk.setEmbedding(embeddings.get(i));
                 docChunk.setPageNum(chunk.getPageNum());
                 docChunk.setSectionTitle(chunk.getSectionTitle());
@@ -163,11 +165,11 @@ public class IndexService {
 
             updateTaskStatus(taskId, IndexTask.TaskStatus.DONE);
 
-            log.info("[IndexService] 索引完成：docId={}，chunks={}，tokens={}",
+            log.info("[IndexService] indexing completed docId={} chunks={} tokens={}",
                     docId, indexableChunks.size(), totalTokens);
 
         } catch (Exception e) {
-            log.error("[IndexService] 索引失败：docId={}，error={}", docId, e.getMessage(), e);
+            log.error("[IndexService] indexing failed docId={} error={}", docId, e.getMessage(), e);
             markFailed(taskId, docId, e.getMessage());
             retryIfPossible(taskId, docId);
         }
@@ -242,7 +244,7 @@ public class IndexService {
         for (int i = 0; i < chunks.size(); i += batchSize) {
             List<DocChunk> batch = chunks.subList(i, Math.min(i + batchSize, chunks.size()));
             chunkRepository.saveAll(batch);
-            log.debug("[IndexService] 写入批次 {}/{}",
+            log.debug("[IndexService] inserted chunk batch {}/{}",
                     i / batchSize + 1,
                     (chunks.size() + batchSize - 1) / batchSize);
         }
@@ -268,7 +270,7 @@ public class IndexService {
             task.setRetryCount(task.getRetryCount() + 1);
             task.setStatus(IndexTask.TaskStatus.PENDING);
             taskRepository.save(task);
-            log.info("[IndexService] 任务将重试：taskId={}，retryCount={}",
+            log.info("[IndexService] 濠电偛顕慨楣冾敋瑜庨幈銊╂偄鏉炴壆鍓ㄩ梺绯曞墲缁嬫垵鈻嶉姀銈嗗仯闁搞儯鍔嶇粚璺ㄧ磼鏉堚晜鐤刟skId={}闂備焦瀵х粙鎴︻敊閹辩畠ryCount={}",
                     taskId, task.getRetryCount());
 
             scheduleRetry(taskId, docId, task.getRetryCount());

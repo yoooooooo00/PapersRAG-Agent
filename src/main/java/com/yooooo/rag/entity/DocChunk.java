@@ -9,7 +9,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * 文档分块实体，保存切分后的文本、向量和全文检索字段。
+ * Stores searchable document chunks, vectors, and source metadata.
  */
 @Entity
 @Table(name = "kb_doc_chunk")
@@ -33,6 +33,12 @@ public class DocChunk {
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
+
+    @Column(name = "raw_content", columnDefinition = "TEXT")
+    private String rawContent;
+
+    @Column(name = "table_caption", columnDefinition = "TEXT")
+    private String tableCaption;
 
     @JdbcTypeCode(SqlTypes.VECTOR)
     @Array(length = 1024)

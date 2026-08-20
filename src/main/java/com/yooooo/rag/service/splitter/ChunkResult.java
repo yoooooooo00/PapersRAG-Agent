@@ -4,7 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 /**
- * 文档切分结果，保存切分后的文本块及其元信息。
+ * Result of splitting parsed content into searchable chunks.
  */
 @Data
 @Builder
@@ -12,6 +12,10 @@ public class ChunkResult {
     private int chunkIndex;
 
     private String content;
+
+    private String rawContent;
+
+    private String tableCaption;
 
     private Integer pageNum;
 

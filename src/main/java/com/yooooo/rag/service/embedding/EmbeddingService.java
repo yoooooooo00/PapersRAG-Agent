@@ -31,7 +31,7 @@ public class EmbeddingService {
 
     @Value("${rag.cache.embedding-ttl:7d}")
     private Duration embeddingTtl;
-    private static final int BATCH_SIZE = 20;
+    private static final int BATCH_SIZE = 10;
 
     public List<float[]> embedBatch(List<String> texts) {
         if (texts == null || texts.isEmpty()) return List.of();

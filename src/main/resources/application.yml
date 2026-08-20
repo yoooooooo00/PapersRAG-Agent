@@ -72,7 +72,8 @@ spring:
       embedding:
         base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
         api-key: ${DASHSCOPE_API_KEY:}
-        model: ${EMBEDDING_MODEL:text-embedding-v3}
+        options:
+          model: ${EMBEDDING_MODEL:text-embedding-v3}
 
   cache:
     query-enabled: ${RAG_QUERY_CACHE_ENABLED:false}

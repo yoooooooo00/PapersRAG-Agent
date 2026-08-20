@@ -7,8 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * 使用滑动窗口策略切分长文本，保证相邻块有一定重叠。
- */
+ * 浣跨敤婊戝姩绐楀彛绛栫暐鍒囧垎闀挎枃鏈紝淇濊瘉鐩搁偦鍧楁湁涓€瀹氶噸鍙犮€? */
 @Component
 @Slf4j
 public class SlidingWindowChunkSplitter implements ChunkSplitter {
@@ -38,7 +37,7 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
             }
         }
 
-        log.debug("[分块] 文档分块完成，共{}块，avgSize={}字符",
+        log.debug("[鍒嗗潡] 鏂囨。鍒嗗潡瀹屾垚锛屽叡{}鍧楋紝avgSize={}瀛楃",
                 chunks.size(),
                 chunks.isEmpty() ? 0 : chunks.stream()
                         .mapToInt(c -> c.getContent().length()).average().orElse(0));
@@ -61,10 +60,14 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
         int start = 0;
 
         while (start < text.length()) {
+            start = alignStartToWordBoundary(text, start);
             int end = Math.min(start + chunkSize, text.length());
 
             if (end < text.length()) {
-                end = findGoodBreakPoint(text, end, overlap);
+                end = findGoodBreakPoint(text, start, end, overlap);
+            }
+            if (end <= start) {
+                end = Math.min(start + chunkSize, text.length());
             }
 
             String chunk = text.substring(start, end).strip();
@@ -72,7 +75,12 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
                 result.add(chunk);
             }
 
-            int nextStart = end - overlap;
+            if (end >= text.length()) {
+                break;
+            }
+
+            int nextStart = Math.max(start + 1, end - overlap);
+            nextStart = alignStartToWordBoundary(text, nextStart);
             if (nextStart <= start) {
                 nextStart = end;
             }
@@ -82,19 +90,66 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
         return result;
     }
 
-    private int findGoodBreakPoint(String text, int position, int overlap) {
-        int searchRange = Math.min(100, position - overlap);
+    private int findGoodBreakPoint(String text, int start, int position, int overlap) {
+        int searchRange = Math.max(120, overlap * 2);
+        int minPosition = Math.max(start + Math.max(1, overlap), position - searchRange);
 
-        String[] breakChars = {"\n\n", "\n", "。", "！", "？", "；", "，", " "};
+        String[] breakChars = {
+                "\n\n", "\n",
+                ". ", "? ", "! ", "; ", ": ",
+                "。", "？", "！", "；", "：",
+                ") ", "] ", " "
+        };
 
         for (String breakChar : breakChars) {
             int idx = text.lastIndexOf(breakChar, position);
-            if (idx > position - searchRange && idx > 0) {
+            if (idx >= minPosition) {
                 return idx + breakChar.length();
             }
         }
 
+        int wordBoundary = findPreviousWordBoundary(text, position, minPosition);
+        return wordBoundary > start ? wordBoundary : position;
+    }
+
+    private int findPreviousWordBoundary(String text, int position, int minPosition) {
+        for (int i = position; i >= minPosition; i--) {
+            if (i <= 0 || i >= text.length()) {
+                continue;
+            }
+            if (Character.isWhitespace(text.charAt(i - 1)) || Character.isWhitespace(text.charAt(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int alignStartToWordBoundary(String text, int position) {
+        if (position <= 0 || position >= text.length()) {
+            return position;
+        }
+        if (!isAsciiLetterOrDigit(text.charAt(position - 1)) || !isAsciiLetterOrDigit(text.charAt(position))) {
+            return position;
+        }
+        int forwardLimit = Math.min(text.length(), position + 40);
+        for (int i = position; i < forwardLimit; i++) {
+            if (Character.isWhitespace(text.charAt(i))) {
+                return i + 1;
+            }
+        }
+        int backwardLimit = Math.max(0, position - 40);
+        for (int i = position; i > backwardLimit; i--) {
+            if (Character.isWhitespace(text.charAt(i - 1))) {
+                return i;
+            }
+        }
         return position;
+    }
+
+    private boolean isAsciiLetterOrDigit(char c) {
+        return (c >= 'a' && c <= 'z')
+                || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9');
     }
 
     private int estimateTokens(String text) {

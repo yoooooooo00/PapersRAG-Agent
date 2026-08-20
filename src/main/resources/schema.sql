@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS kb_doc_chunk (
     paper_id BIGINT,
     chunk_index INT NOT NULL,
     content TEXT NOT NULL,
+    raw_content TEXT,
+    table_caption TEXT,
     content_tsv TSVECTOR,
     embedding VECTOR(1024) NOT NULL,
     page_num INT,
@@ -83,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_chunk_doc_id ON kb_doc_chunk (doc_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_paper_id ON kb_doc_chunk (paper_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_section_type ON kb_doc_chunk (section_type);
 CREATE INDEX IF NOT EXISTS idx_chunk_content_type ON kb_doc_chunk (content_type);
+CREATE INDEX IF NOT EXISTS idx_chunk_table_caption ON kb_doc_chunk (table_caption) WHERE table_caption IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION update_chunk_tsv()
 RETURNS TRIGGER AS $$

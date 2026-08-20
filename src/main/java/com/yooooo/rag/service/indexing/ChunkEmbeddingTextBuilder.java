@@ -77,6 +77,7 @@ public class ChunkEmbeddingTextBuilder {
         addField(parts, "Section", chunk.getSectionTitle());
         addField(parts, "Section type", chunk.getSectionType());
         addField(parts, "Page", chunk.getPageNum() == null ? null : String.valueOf(chunk.getPageNum()));
+        addField(parts, "Table caption", chunk.getTableCaption());
 
         String contentType = normalizeContentType(chunk.getContentType(), chunk.getContent());
         addField(parts, "Content type", contentType);
@@ -88,13 +89,6 @@ public class ChunkEmbeddingTextBuilder {
         String content = chunk.getContent();
         if (content == null) {
             return null;
-        }
-        if ("TABLE".equalsIgnoreCase(contentType)) {
-            return content
-                    .replace("[TABLE]", "")
-                    .replace("[/TABLE]", "")
-                    .replaceAll("\\n{3,}", "\n\n")
-                    .strip();
         }
         return content.strip();
     }

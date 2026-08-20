@@ -17,12 +17,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 管理知识库创建、列表、文档上传和文档删除等业务逻辑。
+ * Manages knowledge bases, document records, and indexing tasks.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class KnowledgeBaseService {
+    private static final String DEFAULT_KB_NAME = "My Papers";
+    private static final String DEFAULT_KB_DESCRIPTION = "Personal paper library";
+    private static final String DEFAULT_DEPARTMENT_ID = "PERSONAL";
     private final KnowledgeBaseRepository kbRepository;
     private final KbPermissionRepository permissionRepository;
     private final KbDocumentRepository documentRepository;
@@ -49,11 +52,12 @@ public class KnowledgeBaseService {
         perm.setGrantedBy(UserContext.getUserId());
         permissionRepository.save(perm);
 
-        log.info("[KB] 知识库创建：id={}，name={}，creator={}", saved.getId(), saved.getName(), UserContext.getUserId());
+        log.info("[KB] knowledge base created id={} name={} creator={}", saved.getId(), saved.getName(), UserContext.getUserId());
         return saved;
     }
 
     public List<KnowledgeBaseVO> listAccessible() {
+        ensurePersonalKnowledgeBase();
         String dept = UserContext.getDepartmentId();
         String role = UserContext.getRole();
         String userId = String.valueOf(UserContext.getUserId());
@@ -105,6 +109,40 @@ public class KnowledgeBaseService {
     }
 
     @Transactional
+    public KnowledgeBase ensurePersonalKnowledgeBase() {
+        return kbRepository.findFirstByIsDeletedFalseOrderByIdAsc()
+                .orElseGet(this::createPersonalKnowledgeBase);
+    }
+
+    private KnowledgeBase createPersonalKnowledgeBase() {
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setName(DEFAULT_KB_NAME);
+        kb.setDescription(DEFAULT_KB_DESCRIPTION);
+        kb.setDepartmentId(resolveDepartmentId());
+        kb.setIsPublic(false);
+        kb.setCreatedBy(UserContext.getUserId());
+
+        KnowledgeBase saved = kbRepository.save(kb);
+
+        KbPermission perm = new KbPermission();
+        perm.setKbId(saved.getId());
+        perm.setSubjectType("USER");
+        perm.setSubjectId(String.valueOf(UserContext.getUserId()));
+        perm.setPermission("ADMIN");
+        perm.setGrantedBy(UserContext.getUserId());
+        permissionRepository.save(perm);
+
+        log.info("[KB] default personal knowledge base created id={} name={} creator={}",
+                saved.getId(), saved.getName(), UserContext.getUserId());
+        return saved;
+    }
+
+    private String resolveDepartmentId() {
+        String departmentId = UserContext.getDepartmentId();
+        return departmentId != null && !departmentId.isBlank() ? departmentId : DEFAULT_DEPARTMENT_ID;
+    }
+
+    @Transactional
     public KbDocument createDocumentRecord(Long kbId, org.springframework.web.multipart.MultipartFile file) {
         String fileName = file.getOriginalFilename();
         validateFileType(fileName);
@@ -142,7 +180,7 @@ public class KnowledgeBaseService {
 
         minioService.delete(doc.getMinioPath());
 
-        log.info("[KB] 文档删除：docId={}，fileName={}", docId, doc.getFileName());
+        log.info("[KB] document deleted docId={} fileName={}", docId, doc.getFileName());
     }
 
     @Transactional
@@ -156,7 +194,7 @@ public class KnowledgeBaseService {
         documentRepository.save(doc);
 
         indexService.submitIndexTask(docId);
-        log.info("[KB] 触发重建索引：docId={}，newVersion={}", docId, doc.getVersion());
+        log.info("[KB] document reindex submitted docId={} newVersion={}", docId, doc.getVersion());
     }
 
     private void validateFileType(String fileName) {

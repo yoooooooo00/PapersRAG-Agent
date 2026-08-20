@@ -42,7 +42,6 @@ public class PaperService {
 
 
     public PaperUploadResponse uploadPaper(
-            Long kbId,
             MultipartFile file,
             String title,
             String authors,
@@ -57,8 +56,7 @@ public class PaperService {
             String readingStatus,
             Integer rating,
             String note) {
-        Long targetKbId = kbId != null ? kbId : 1L;
-        validateKb(targetKbId);
+        Long targetKbId = knowledgeBaseService.ensurePersonalKnowledgeBase().getId();
         if (file == null || file.isEmpty()) {
             throw BizException.badRequest("Paper file must not be empty");
         }
@@ -117,11 +115,12 @@ public class PaperService {
     @Transactional
     public PaperVO create(PaperCreateRequest req) {
         validateCreate(req);
-        validateKb(req.getKbId());
         validateDocument(req.getDocId());
 
+        Long targetKbId = resolveKbId(req.getKbId());
+
         Paper paper = new Paper();
-        paper.setKbId(req.getKbId() != null ? req.getKbId() : 1L);
+        paper.setKbId(targetKbId);
         paper.setDocId(req.getDocId());
         paper.setTitle(req.getTitle().strip());
         paper.setAuthors(req.getAuthors());
@@ -149,8 +148,7 @@ public class PaperService {
         Paper paper = requirePaper(paperId);
 
         if (req.getKbId() != null) {
-            validateKb(req.getKbId());
-            paper.setKbId(req.getKbId());
+            paper.setKbId(resolveKbId(req.getKbId()));
         }
         if (req.getDocId() != null) {
             validateDocument(req.getDocId());
@@ -320,10 +318,20 @@ public class PaperService {
     }
 
     private void validateKb(Long kbId) {
-        Long id = kbId != null ? kbId : 1L;
-        kbRepository.findById(id)
+        if (kbId == null) {
+            throw BizException.badRequest("Knowledge base id must not be empty");
+        }
+        kbRepository.findById(kbId)
                 .filter(kb -> !Boolean.TRUE.equals(kb.getIsDeleted()))
                 .orElseThrow(() -> BizException.notFound("Knowledge base not found"));
+    }
+
+    private Long resolveKbId(Long kbId) {
+        if (kbId != null) {
+            validateKb(kbId);
+            return kbId;
+        }
+        return knowledgeBaseService.ensurePersonalKnowledgeBase().getId();
     }
 
     private void validateDocument(Long docId) {

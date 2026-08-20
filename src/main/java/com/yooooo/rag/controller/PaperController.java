@@ -33,7 +33,6 @@ public class PaperController {
     @PostMapping("/upload")
     public ApiResponse<PaperUploadResponse> upload(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(required = false, defaultValue = "1") Long kbId,
             @RequestParam(required = false) String title,
             @RequestParam(required = false) String authors,
             @RequestParam(required = false) Integer year,
@@ -48,7 +47,7 @@ public class PaperController {
             @RequestParam(required = false) Integer rating,
             @RequestParam(required = false) String note) {
         return ApiResponse.ok(paperService.uploadPaper(
-                kbId, file, title, authors, year, venue, doi, arxivId,
+                file, title, authors, year, venue, doi, arxivId,
                 abstractText, keywords, bibtex, sourceUrl, readingStatus, rating, note));
     }
     @GetMapping

@@ -9,7 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 负责把解析后的文档内容切分成可检索的文本块。
+ * Splits parsed document content into searchable text chunks.
  */
 @Service
 @RequiredArgsConstructor
@@ -42,10 +42,7 @@ public class ChunkService {
             return List.of();
         }
 
-        boolean hasStructure = parseResult.getPages().stream()
-                .anyMatch(p -> p.getSectionTitle() != null);
-
-        ChunkSplitter splitter = (hasStructure && config.isStructureAware())
+        ChunkSplitter splitter = config.isStructureAware()
                 ? structureAwareSplitter
                 : slidingWindowSplitter;
 
@@ -55,7 +52,7 @@ public class ChunkService {
                 .filter(c -> c.getContent().length() >= 20)
                 .toList();
 
-        log.info("[分块] 完成分块：策略={}，共{}块，总字符={}",
+        log.info("[ChunkService] chunking completed strategy={} chunks={} totalChars={}",
                 splitter.getClass().getSimpleName(),
                 chunks.size(),
                 chunks.stream().mapToInt(c -> c.getContent().length()).sum());
