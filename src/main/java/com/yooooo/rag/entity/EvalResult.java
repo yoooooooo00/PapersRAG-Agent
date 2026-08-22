@@ -1,11 +1,19 @@
 package com.yooooo.rag.entity;
 
-import jakarta.persistence.*;
+import com.yooooo.rag.service.retrieval.QueryRoutingService;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Data;
 
 /**
- * 评估结果实体，记录一次评估运行的命中、排名和质量指标。
+ * Evaluation result entry.
  */
 @Entity
 @Table(name = "kb_eval_result")
@@ -18,20 +26,35 @@ public class EvalResult {
     @Column(nullable = false)
     private Long datasetId;
 
+    @Column(name = "task_id")
+    private Long taskId;
+
     @Column(nullable = false, length = 50)
     private String evalVersion;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "expected_route", length = 20)
+    private QueryRoutingService.QueryRoute expectedRoute;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "query_route", length = 20)
+    private QueryRoutingService.QueryRoute queryRoute;
 
     @Column(nullable = false)
     private Boolean hit;
 
     private Integer rank;
 
+    @Column(columnDefinition = "BIGINT[]")
+    private Long[] retrievedChunkIds;
+
+    @Column(columnDefinition = "BIGINT[]")
+    private Long[] usedChunkIds;
+
     @Column(columnDefinition = "TEXT")
     private String actualAnswer;
 
     private Double faithfulness;
-
-    private Double answerRelevancy;
 
     @Column(nullable = false)
     private LocalDateTime evalAt = LocalDateTime.now();

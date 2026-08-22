@@ -29,6 +29,8 @@ public class PdfParser implements DocumentParser {
     private static final String CONTENT_MIXED = "MIXED";
     private static final String TABLE_CAPTION_START = "[TABLE_CAPTION]";
     private static final String TABLE_CAPTION_END = "[/TABLE_CAPTION]";
+    private static final String FIGURE_CAPTION_START = "[FIGURE_CAPTION]";
+    private static final String FIGURE_CAPTION_END = "[/FIGURE_CAPTION]";
 
     private final AcademicSectionDetector sectionDetector;
 
@@ -92,7 +94,7 @@ public class PdfParser implements DocumentParser {
                 return ParseResult.failure("PDF parsing produced no text. The file may be scanned and require OCR.");
             }
 
-            String title = extractTitle(pages);
+            String title = extractTitle(rawPages.isEmpty() ? null : rawPages.get(0));
             log.info("[PdfParser] Parsed PDF fileName={} totalPages={} textPages={} title={}",
                     fileName, totalPages, pages.size(), title);
 
@@ -147,7 +149,9 @@ public class PdfParser implements DocumentParser {
 
     private String filterNoiseLines(String rawText, Map<String, Integer> repeatedLineCounts, int totalPages) {
         StringBuilder output = new StringBuilder();
-        int repeatedThreshold = Math.max(3, Math.min(totalPages, (int) Math.ceil(totalPages * 0.35)));
+        int repeatedThreshold = totalPages <= 5
+                ? 2
+                : Math.max(3, Math.min(totalPages, (int) Math.ceil(totalPages * 0.35)));
         for (String line : splitLines(rawText)) {
             String stripped = line.strip();
             String normalized = normalizeNoiseLine(stripped);
@@ -204,6 +208,14 @@ public class PdfParser implements DocumentParser {
                 || lower.contains("conference on neural information processing systems")
                 || lower.contains("copyright")
                 || lower.contains("all rights reserved")
+                || lower.contains("journal of")
+                || lower.contains("vol.")
+                || lower.contains("volume")
+                || lower.contains("issue")
+                || lower.contains("pp.")
+                || lower.contains("accepted manuscript")
+                || lower.contains("author manuscript")
+                || lower.contains("published in")
                 || lower.matches("^arxiv:\\d{4}\\.\\d{4,5}.*")
                 || lower.matches("^preprint.*")
                 || lower.matches("^under review.*")
@@ -217,6 +229,14 @@ public class PdfParser implements DocumentParser {
         String pendingCaption = null;
 
         for (String line : lines) {
+            String figureCaption = extractFigureCaption(line);
+            if (figureCaption != null) {
+                flushTable(output, tableRows, pendingCaption);
+                pendingCaption = null;
+                output.append(FIGURE_CAPTION_START).append(figureCaption).append(FIGURE_CAPTION_END).append('\n');
+                continue;
+            }
+
             String caption = extractTableCaption(line);
             if (caption != null) {
                 flushTable(output, tableRows, pendingCaption);
@@ -285,6 +305,20 @@ public class PdfParser implements DocumentParser {
             return null;
         }
         if (stripped.matches("(?i)^table\\s+[ivxlcdm0-9]+\\s*[:.\\-]?.*")) {
+            return stripped;
+        }
+        return null;
+    }
+
+    private String extractFigureCaption(String line) {
+        if (line == null) {
+            return null;
+        }
+        String stripped = line.strip();
+        if (stripped.length() < 8 || stripped.length() > 300) {
+            return null;
+        }
+        if (stripped.matches("(?i)^(figure|fig\\.)\\s+[ivxlcdm0-9]+\\s*[:.\\-]?.*")) {
             return stripped;
         }
         return null;
@@ -380,32 +414,44 @@ public class PdfParser implements DocumentParser {
                 .strip();
     }
 
-    private String extractTitle(List<ParseResult.PageContent> pages) {
-        if (pages.isEmpty()) return null;
-        String[] lines = pages.get(0).getText().split("\\R");
+    private String extractTitle(String firstPageText) {
+        if (firstPageText == null || firstPageText.isBlank()) {
+            return null;
+        }
+        String[] lines = firstPageText.split("\\R");
         List<String> candidates = new ArrayList<>();
         for (String rawLine : lines) {
             String line = rawLine.strip();
             if (line.isBlank()) {
-                if (!candidates.isEmpty()) break;
+                if (!candidates.isEmpty()) {
+                    break;
+                }
                 continue;
             }
-            if (line.equals("[TABLE]") || line.equals("[/TABLE]") || line.startsWith("|")) {
+            if (line.equals("[TABLE]") || line.equals("[/TABLE]") || line.startsWith("|")
+                    || line.startsWith("[FIGURE_CAPTION]") || line.startsWith("[/FIGURE_CAPTION]")) {
                 continue;
             }
-            if (line.startsWith(TABLE_CAPTION_START)) {
+            if (line.toLowerCase(Locale.ROOT).startsWith("abstract")) {
+                break;
+            }
+            if (line.startsWith(TABLE_CAPTION_START) || line.startsWith("[FIGURE_CAPTION]")) {
                 continue;
             }
             if (sectionDetector.detect(line).sectionType() != null) {
                 break;
             }
             if (looksLikeAuthorOrMetadata(line)) {
-                if (!candidates.isEmpty()) break;
+                if (!candidates.isEmpty()) {
+                    break;
+                }
                 continue;
             }
-            if (line.length() >= 6 && line.length() <= 180) {
+            if (looksLikeTitleLine(line)) {
                 candidates.add(line);
-                if (candidates.size() >= 3) break;
+                if (candidates.size() >= 3) {
+                    break;
+                }
             }
         }
         if (candidates.isEmpty()) {
@@ -422,6 +468,30 @@ public class PdfParser implements DocumentParser {
                 || lower.contains("department")
                 || lower.contains("arxiv")
                 || lower.startsWith("http")
-                || lower.matches(".*\\b20\\d{2}\\b.*");
+                || lower.matches(".*\\b20\\d{2}\\b.*")
+                || looksLikeAuthorLine(line);
+    }
+
+    private boolean looksLikeAuthorLine(String line) {
+        if (line == null) {
+            return false;
+        }
+        String trimmed = line.strip();
+        if (trimmed.length() < 6 || trimmed.length() > 260 || !trimmed.contains(",")) {
+            return false;
+        }
+        return trimmed.matches("(?s).*(\\b[A-Z][a-z]+\\d?\\b\\s*,\\s*){1,}\\b[A-Z][a-z]+\\d?\\b.*")
+                || trimmed.matches("(?s).*(\\b[A-Z][a-z]+\\d?\\b.*\\b[A-Z][a-z]+\\d?\\b).*");
+    }
+
+    private boolean looksLikeTitleLine(String line) {
+        if (line == null) {
+            return false;
+        }
+        String trimmed = line.strip();
+        if (trimmed.length() < 6 || trimmed.length() > 180) {
+            return false;
+        }
+        return !trimmed.contains("@") && !trimmed.matches(".*\\b20\\d{2}\\b.*");
     }
 }

@@ -31,7 +31,7 @@ spring:
 
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:192.168.88.128}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
@@ -104,8 +104,8 @@ rag:
       crop-header-points: ${PDF_CROP_HEADER_POINTS:60}
       crop-footer-points: ${PDF_CROP_FOOTER_POINTS:50}
   chunk:
-    size: ${RAG_CHUNK_SIZE:512}
-    overlap: ${RAG_CHUNK_OVERLAP:64}
+    size: ${RAG_CHUNK_SIZE:720}
+    overlap: ${RAG_CHUNK_OVERLAP:120}
     structure-aware: ${RAG_CHUNK_STRUCTURE_AWARE:true}
   retrieval:
     vector-top-k: ${RAG_VECTOR_TOP_K:20}

@@ -3,35 +3,41 @@ package com.yooooo.rag.service.rag;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yooooo.rag.dto.RagResponse;
+import com.yooooo.rag.entity.DocChunk;
 import com.yooooo.rag.entity.KbDocument;
 import com.yooooo.rag.repository.KbDocumentRepository;
 import com.yooooo.rag.service.retrieval.HybridRetrieverService;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * 根据答案中的引用和检索结果构建可展示的来源列表。
+ * Builds source items from cited chunks for paper QA.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class SourceBuilder {
+    private static final int NORMAL_EXCERPT_LIMIT = 220;
+    private static final int TABLE_EXCERPT_LIMIT = 500;
+
     private final CitationParser citationParser;
     private final KbDocumentRepository documentRepository;
     private final ObjectMapper objectMapper;
 
-    public List<RagResponse.Source> buildSources(
-            String answer,
-            List<HybridRetrieverService.ScoredChunk> chunks) {
+    public List<RagResponse.Source> buildSources(String answer, List<HybridRetrieverService.ScoredChunk> chunks) {
         Set<Integer> citedIndices = citationParser.extractCitedIndices(answer);
-
         if (citedIndices.isEmpty()) {
-            log.debug("[SourceBuilder] 模型未标注引用，使用所有 chunk 作为来源");
             citedIndices = new LinkedHashSet<>();
-            for (int i = 1; i <= chunks.size(); i++) citedIndices.add(i);
+            for (int i = 1; i <= chunks.size(); i++) {
+                citedIndices.add(i);
+            }
         }
 
         Set<Long> docIds = chunks.stream()
@@ -42,17 +48,23 @@ public class SourceBuilder {
 
         List<RagResponse.Source> sources = new ArrayList<>();
         for (int idx : citedIndices) {
-            if (idx < 1 || idx > chunks.size()) continue;
+            if (idx < 1 || idx > chunks.size()) {
+                continue;
+            }
             HybridRetrieverService.ScoredChunk sc = chunks.get(idx - 1);
-            KbDocument doc = docMap.get(sc.chunk().getDocId());
+            DocChunk chunk = sc.chunk();
+            KbDocument doc = docMap.get(chunk.getDocId());
+            String contentType = chunk.getContentType() == null ? "TEXT" : chunk.getContentType();
             sources.add(RagResponse.Source.builder()
                     .chunkId(sc.id())
-                    .docId(sc.chunk().getDocId())
-                    .docName(doc != null ? doc.getFileName() : "未知文档")
-                    .pageNum(sc.chunk().getPageNum())
-                    .sectionTitle(sc.chunk().getSectionTitle())
-                    .excerpt(sc.content().substring(0, Math.min(200, sc.content().length())))
+                    .docId(chunk.getDocId())
+                    .docName(doc != null ? doc.getFileName() : "unknown document")
+                    .pageNum(chunk.getPageNum())
+                    .sectionTitle(chunk.getSectionTitle())
+                    .excerpt(buildExcerpt(chunk))
                     .score(sc.score())
+                    .contentType(contentType)
+                    .tableCaption(chunk.getTableCaption())
                     .build());
         }
         return sources;
@@ -62,8 +74,36 @@ public class SourceBuilder {
         try {
             return objectMapper.writeValueAsString(sources);
         } catch (JsonProcessingException e) {
-            log.error("[SourceBuilder] 来源序列化失败：{}", e.getMessage());
+            log.error("[SourceBuilder] failed to serialize sources: {}", e.getMessage());
             return "[]";
         }
+    }
+
+    private String buildExcerpt(DocChunk chunk) {
+        String contentType = chunk.getContentType() == null ? "TEXT" : chunk.getContentType();
+        String raw = firstNonBlank(chunk.getRawContent(), chunk.getContent());
+        if (raw == null) {
+            return "";
+        }
+        int limit = "TABLE".equalsIgnoreCase(contentType) ? TABLE_EXCERPT_LIMIT : NORMAL_EXCERPT_LIMIT;
+        return trimExcerpt(raw, limit);
+    }
+
+    private String trimExcerpt(String value, int limit) {
+        String normalized = value.replaceAll("\\s+", " ").strip();
+        if (normalized.length() <= limit) {
+            return normalized;
+        }
+        return normalized.substring(0, limit).strip() + "...";
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first.strip();
+        }
+        if (second != null && !second.isBlank()) {
+            return second.strip();
+        }
+        return null;
     }
 }

@@ -18,8 +18,9 @@ import org.springframework.stereotype.Component;
 @Component("structureAwareSplitter")
 @Slf4j
 public class StructureAwareChunkSplitter implements ChunkSplitter {
-    private static final Pattern TABLE_BLOCK = Pattern.compile(
-            "(?s)(?:\\[TABLE_CAPTION](.*?)\\[/TABLE_CAPTION]\\s*)?\\[TABLE](.*?)\\[/TABLE]");
+    private static final Pattern BLOCK_MARKER = Pattern.compile(
+            "(?s)(?:\\[TABLE_CAPTION](.*?)\\[/TABLE_CAPTION]\\s*)?\\[TABLE](.*?)\\[/TABLE]|\\[FIGURE_CAPTION](.*?)\\[/FIGURE_CAPTION]");
+    private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("(?is)\\b(?:abstract|摘要)\\b");
     private static final Set<String> KNOWN_METRICS = Set.of(
             "MRR", "HITS@1", "HITS@3", "HITS@5", "HITS@10", "HIT@1", "HIT@3", "HIT@10",
             "ACC", "ACCURACY", "F1", "PRECISION", "RECALL", "AUC", "MAP", "NDCG", "MAE", "RMSE");
@@ -49,6 +50,21 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                         .sectionType(section.sectionType())
                         .contentType("TABLE")
                         .estimatedTokens(estimateTokens(summary))
+                        .build());
+                continue;
+            }
+            if ("FIGURE_CAPTION".equals(section.contentType())) {
+                String figureText = section.text().startsWith("Figure caption:")
+                        ? section.text()
+                        : "Figure caption: " + section.text();
+                chunks.add(ChunkResult.builder()
+                        .chunkIndex(chunkIndex++)
+                        .content(figureText)
+                        .pageNum(section.pageNum())
+                        .sectionTitle(section.title())
+                        .sectionType(section.sectionType())
+                        .contentType("FIGURE_CAPTION")
+                        .estimatedTokens(estimateTokens(figureText))
                         .build());
                 continue;
             }
@@ -104,6 +120,15 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                 continue;
             }
 
+            String pageText = page.getText();
+            if (page.getPageNum() == 1) {
+                FrontmatterSplit split = splitFrontMatter(pageText);
+                if (split.frontMatter() != null && !split.frontMatter().isBlank()) {
+                    sections.add(new TextSection(null, null, "FRONTMATTER", split.frontMatter(), page.getPageNum(), null));
+                }
+                pageText = split.body();
+            }
+
             boolean sectionChanged = current.length() > 0
                     && hasSectionMetadata(page)
                     && (!Objects.equals(currentSectionType, page.getSectionType())
@@ -121,25 +146,28 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                 currentPage = page.getPageNum();
             }
 
-            Matcher matcher = TABLE_BLOCK.matcher(page.getText());
+            Matcher matcher = BLOCK_MARKER.matcher(pageText);
             int cursor = 0;
             while (matcher.find()) {
-                String before = page.getText().substring(cursor, matcher.start()).strip();
+                String before = pageText.substring(cursor, matcher.start()).strip();
                 if (!before.isBlank()) {
                     current.append(before).append("\n\n");
                 }
                 addTextSection(sections, currentTitle, currentSectionType, currentContentType, current.toString(), currentPage);
                 current = new StringBuilder();
 
-                String caption = cleanMarkerText(matcher.group(1));
+                String tableCaption = cleanMarkerText(matcher.group(1));
                 String rawTable = matcher.group(2) == null ? "" : matcher.group(2).strip();
-                if (!rawTable.isBlank()) {
-                    sections.add(new TextSection(currentTitle, currentSectionType, "TABLE", rawTable, page.getPageNum(), caption));
+                String figureCaption = cleanMarkerText(matcher.group(3));
+                if (figureCaption != null) {
+                    sections.add(new TextSection(currentTitle, currentSectionType, "FIGURE_CAPTION", figureCaption, page.getPageNum(), null));
+                } else if (!rawTable.isBlank()) {
+                    sections.add(new TextSection(currentTitle, currentSectionType, "TABLE", rawTable, page.getPageNum(), tableCaption));
                 }
                 cursor = matcher.end();
             }
 
-            String tail = page.getText().substring(cursor).strip();
+            String tail = pageText.substring(cursor).strip();
             if (!tail.isBlank()) {
                 current.append(tail).append("\n\n");
             }
@@ -147,6 +175,19 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
 
         addTextSection(sections, currentTitle, currentSectionType, currentContentType, current.toString(), currentPage);
         return sections;
+    }
+
+    private FrontmatterSplit splitFrontMatter(String text) {
+        if (text == null || text.isBlank()) {
+            return new FrontmatterSplit(null, "");
+        }
+        Matcher matcher = FRONTMATTER_PATTERN.matcher(text);
+        if (!matcher.find()) {
+            return new FrontmatterSplit(null, text);
+        }
+        String frontMatter = text.substring(0, matcher.start()).strip();
+        String body = text.substring(matcher.start()).strip();
+        return new FrontmatterSplit(frontMatter, body);
     }
 
     private void addTextSection(List<TextSection> sections, String title, String sectionType,
@@ -169,6 +210,12 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         addLine(lines, "Section", section.title());
         addLine(lines, "Section type", section.sectionType());
         addLine(lines, "Page", String.valueOf(section.pageNum()));
+        if (!table.headers().isEmpty()) {
+            lines.add("Header columns: " + String.join(", ", table.headers()) + ".");
+        }
+        if (!table.rows().isEmpty()) {
+            lines.add("Row count: " + table.rows().size() + ".");
+        }
         if (!datasets.isEmpty()) lines.add("Datasets mentioned: " + String.join(", ", datasets) + ".");
         if (!metrics.isEmpty()) lines.add("Metrics mentioned: " + String.join(", ", metrics) + ".");
         if (!methods.isEmpty()) lines.add("Methods or variants mentioned: " + String.join(", ", methods) + ".");
@@ -329,4 +376,5 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
 
     record TextSection(String title, String sectionType, String contentType, String text, int pageNum, String tableCaption) {}
     record ParsedTable(List<String> headers, List<List<String>> rows) {}
+    record FrontmatterSplit(String frontMatter, String body) {}
 }

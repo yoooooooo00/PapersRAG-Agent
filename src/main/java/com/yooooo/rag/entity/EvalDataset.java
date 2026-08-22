@@ -1,12 +1,20 @@
 package com.yooooo.rag.entity;
 
-import jakarta.persistence.*;
+import com.yooooo.rag.service.retrieval.QueryRoutingService;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
 
 /**
- * 评估数据集实体，保存标准问题、期望答案和期望命中文档块。
+ * Evaluation dataset entry.
  */
 @Entity
 @Table(name = "kb_eval_dataset")
@@ -27,6 +35,10 @@ public class EvalDataset {
 
     @Column(columnDefinition = "BIGINT[]")
     private Long[] expectedChunkIds;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "expected_route", length = 20)
+    private QueryRoutingService.QueryRoute expectedRoute;
 
     @Column(nullable = false)
     private Long createdBy;

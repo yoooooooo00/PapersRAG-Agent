@@ -6,7 +6,11 @@ import com.yooooo.rag.repository.KbPermissionRepository;
 import com.yooooo.rag.repository.KnowledgeBaseRepository;
 import com.yooooo.rag.security.UserContext;
 import com.yooooo.rag.service.embedding.EmbeddingService;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 结合向量检索和全文检索，返回带分数的候选文本块。
+ * Combines vector search and full-text search, returning scored chunks.
  */
 @Service
 @RequiredArgsConstructor
@@ -25,6 +29,8 @@ public class HybridRetrieverService {
     private final TsQueryBuilder tsQueryBuilder;
     private final KnowledgeBaseRepository kbRepository;
     private final KbPermissionRepository permissionRepository;
+    private final ConfidenceFilter confidenceFilter;
+
     @Value("${rag.retrieval.vector-top-k:20}")
     private int vectorTopK;
     @Value("${rag.retrieval.fulltext-top-k:20}")
@@ -34,41 +40,50 @@ public class HybridRetrieverService {
     public List<ScoredChunk> retrieve(String question, List<Long> kbIds, int topN) {
         float[] queryEmbedding = embeddingService.embed(question);
         String embeddingStr = toVectorString(queryEmbedding);
-        List<DocChunk> vectorResults = kbIds.stream()
-                .flatMap(kbId -> chunkRepository.findByVectorSimilarity(kbId, embeddingStr, vectorTopK).stream())
+
+        List<ScoredChunk> vectorResults = kbIds.stream()
+                .flatMap(kbId -> hydrateScoredChunks(
+                        chunkRepository.findVectorSimilarityScores(kbId, embeddingStr, vectorTopK)).stream())
                 .collect(Collectors.toList());
+
         String tsQuery = tsQueryBuilder.build(question);
-        List<DocChunk> fulltextResults = new ArrayList<>();
+        List<ScoredChunk> fulltextResults = new ArrayList<>();
         if (tsQuery != null) {
             fulltextResults = kbIds.stream()
-                    .flatMap(kbId -> chunkRepository.findByFullTextSearch(kbId, tsQuery, fulltextTopK).stream())
+                    .flatMap(kbId -> hydrateScoredChunks(
+                            chunkRepository.findFullTextSearchScores(kbId, tsQuery, fulltextTopK)).stream())
                     .collect(Collectors.toList());
         }
-        log.debug("[HybridRetriever] 向量检索召回={}，全文检索召回={}",
+
+        vectorResults = confidenceFilter.filter(vectorResults);
+        fulltextResults = confidenceFilter.filter(fulltextResults);
+
+        log.debug("[HybridRetriever] vectorResults={} fulltextResults={}",
                 vectorResults.size(), fulltextResults.size());
+
         List<ScoredChunk> merged = rrfMerge(vectorResults, fulltextResults);
         List<ScoredChunk> topResults = merged.stream()
                 .limit(topN)
                 .collect(Collectors.toList());
-        log.info("[HybridRetriever] RRF 融合后 TopN={}，返回 {} 条", topN, topResults.size());
+        log.info("[HybridRetriever] RRF merged TopN={} returned={}", topN, topResults.size());
         return topResults;
     }
 
     public List<ScoredChunk> retrieveVectorOnly(String question, List<Long> kbIds, int topN) {
         float[] queryEmbedding = embeddingService.embed(question);
         String embeddingStr = toVectorString(queryEmbedding);
-        List<DocChunk> vectorResults = kbIds.stream()
-                .flatMap(kbId -> chunkRepository.findByVectorSimilarity(kbId, embeddingStr, topN).stream())
-                .limit(topN)
+        List<ScoredChunk> vectorResults = kbIds.stream()
+                .flatMap(kbId -> hydrateScoredChunks(
+                        chunkRepository.findVectorSimilarityScores(kbId, embeddingStr, topN)).stream())
                 .collect(Collectors.toList());
 
-        List<ScoredChunk> results = new ArrayList<>();
-        for (int rank = 0; rank < vectorResults.size(); rank++) {
-            results.add(new ScoredChunk(vectorResults.get(rank), 1.0 / (rank + 1)));
-        }
+        List<ScoredChunk> results = confidenceFilter.filter(vectorResults).stream()
+                .limit(topN)
+                .collect(Collectors.toList());
         log.info("[HybridRetriever] Vector only TopN={} returned={}", topN, results.size());
         return results;
     }
+
     public List<ScoredChunk> retrieveWithPermissionCheck(
             String question, List<Long> requestedKbIds, int topN) {
         List<Long> allowedKbIds = filterAllowedKbIds(requestedKbIds);
@@ -109,32 +124,53 @@ public class HybridRetrieverService {
                 .toList();
     }
 
-    private List<ScoredChunk> rrfMerge(List<DocChunk> vectorList, List<DocChunk> fulltextList) {
+    private List<ScoredChunk> rrfMerge(List<ScoredChunk> vectorList, List<ScoredChunk> fulltextList) {
         Map<Long, Double> scoreMap = new LinkedHashMap<>();
-
         Map<Long, DocChunk> chunkMap = new HashMap<>();
 
         for (int rank = 0; rank < vectorList.size(); rank++) {
-            DocChunk chunk = vectorList.get(rank);
-
+            ScoredChunk chunk = vectorList.get(rank);
             double rrfScore = 1.0 / (RRF_K + rank + 1);
-
-            scoreMap.merge(chunk.getId(), rrfScore, Double::sum);
-            chunkMap.put(chunk.getId(), chunk);
+            scoreMap.merge(chunk.id(), rrfScore, Double::sum);
+            chunkMap.put(chunk.id(), chunk.chunk());
         }
 
         for (int rank = 0; rank < fulltextList.size(); rank++) {
-            DocChunk chunk = fulltextList.get(rank);
+            ScoredChunk chunk = fulltextList.get(rank);
             double rrfScore = 1.0 / (RRF_K + rank + 1);
-
-            scoreMap.merge(chunk.getId(), rrfScore, Double::sum);
-            chunkMap.put(chunk.getId(), chunk);
+            scoreMap.merge(chunk.id(), rrfScore, Double::sum);
+            chunkMap.put(chunk.id(), chunk.chunk());
         }
 
         return scoreMap.entrySet().stream()
                 .sorted(Map.Entry.<Long, Double>comparingByValue().reversed())
                 .map(e -> new ScoredChunk(chunkMap.get(e.getKey()), e.getValue()))
                 .collect(Collectors.toList());
+    }
+
+    private List<ScoredChunk> hydrateScoredChunks(List<DocChunkRepository.ChunkScoreView> scoredViews) {
+        if (scoredViews == null || scoredViews.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> ids = scoredViews.stream()
+                .map(DocChunkRepository.ChunkScoreView::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        Map<Long, DocChunk> chunkMap = chunkRepository.findByIds(ids).stream()
+                .collect(Collectors.toMap(DocChunk::getId, c -> c));
+
+        List<ScoredChunk> results = new ArrayList<>();
+        for (DocChunkRepository.ChunkScoreView view : scoredViews) {
+            if (view.getId() == null) {
+                continue;
+            }
+            DocChunk chunk = chunkMap.get(view.getId());
+            if (chunk != null) {
+                results.add(new ScoredChunk(chunk, view.getScore() == null ? 0.0 : view.getScore()));
+            }
+        }
+        return results;
     }
 
     private String toVectorString(float[] embedding) {
@@ -146,10 +182,10 @@ public class HybridRetrieverService {
         sb.append("]");
         return sb.toString();
     }
-/**
- * 带检索分数的文档分块结果。
- */
 
+    /**
+     * Scored document chunk result.
+     */
     public record ScoredChunk(DocChunk chunk, double score) {
         public Long id() { return chunk.getId(); }
 

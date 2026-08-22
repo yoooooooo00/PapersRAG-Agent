@@ -7,9 +7,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 /**
- * 评估结果的数据访问接口。
+ * Evaluation result repository.
  */
 public interface EvalResultRepository extends JpaRepository<EvalResult, Long> {
+    List<EvalResult> findByTaskIdOrderByEvalAtDesc(Long taskId);
+
+    List<EvalResult> findByDatasetIdInAndEvalVersionOrderByEvalAtDesc(List<Long> datasetIds, String evalVersion);
+
     @Query("""
             SELECT new com.yooooo.rag.dto.EvalReport(
                 d.kbId, r.evalVersion, COUNT(r),

@@ -17,7 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 串联查询规范化、路由、检索、重排、生成和引用构建的完整 RAG 流程。
+ * Full paper QA pipeline with routing, retrieval, reranking, and source generation.
  */
 @Service
 @RequiredArgsConstructor
@@ -57,7 +57,6 @@ public class FullRagPipeline {
         }
 
         QueryRoutingService.QueryRoute route = queryRoutingService.classify(question);
-
         List<HybridRetrieverService.ScoredChunk> candidates = retrieveByRoute(route, question, kbIds);
         if (candidates.isEmpty()) {
             return RagResponse.notFound();
@@ -70,7 +69,7 @@ public class FullRagPipeline {
 
         List<HybridRetrieverService.ScoredChunk> trimmed = contextTrimmer.trim(filtered);
         String context = buildContext(trimmed);
-        String answer = generateAnswer(question, context, trimmed.size());
+        String answer = generateAnswer(question, context, trimmed.size(), route);
         List<RagResponse.Source> sources = sourceBuilder.buildSources(answer, trimmed);
 
         if (System.currentTimeMillis() % 5 == 0) {
@@ -114,16 +113,25 @@ public class FullRagPipeline {
         for (int i = 0; i < chunks.size(); i++) {
             var sc = chunks.get(i);
             sb.append("[ref").append(i + 1).append("]");
-            if (sc.chunk().getSectionTitle() != null) {
+            if (sc.chunk().getContentType() != null) {
+                sb.append("[").append(sc.chunk().getContentType()).append("]");
+            }
+            if (sc.chunk().getPageNum() != null) {
+                sb.append(" p.").append(sc.chunk().getPageNum());
+            }
+            if (sc.chunk().getSectionTitle() != null && !sc.chunk().getSectionTitle().isBlank()) {
                 sb.append(" ").append(sc.chunk().getSectionTitle());
+            }
+            if (sc.chunk().getTableCaption() != null && !sc.chunk().getTableCaption().isBlank()) {
+                sb.append("\nCaption: ").append(sc.chunk().getTableCaption());
             }
             sb.append("\n").append(sc.content()).append("\n\n");
         }
         return sb.toString().strip();
     }
 
-    private String generateAnswer(String question, String context, int chunkCount) {
-        String systemPrompt = RagPromptTemplate.buildSystemPrompt(context, chunkCount);
+    private String generateAnswer(String question, String context, int chunkCount, QueryRoutingService.QueryRoute route) {
+        String systemPrompt = RagPromptTemplate.buildSystemPrompt(question, context, chunkCount, route);
         return chatClient.prompt()
                 .system(systemPrompt)
                 .user(question)

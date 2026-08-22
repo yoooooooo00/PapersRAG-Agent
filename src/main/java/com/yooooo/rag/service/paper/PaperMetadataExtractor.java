@@ -64,7 +64,7 @@ public class PaperMetadataExtractor {
             }
         }
         if (paper.getYear() == null) {
-            Integer year = extractYear(fullText);
+            Integer year = extractYear(parseResult, fileName);
             if (year != null) {
                 paper.setYear(year);
                 changed = true;
@@ -114,16 +114,35 @@ public class PaperMetadataExtractor {
         return null;
     }
 
-    private Integer extractYear(String text) {
+    private Integer extractYear(ParseResult parseResult, String fileName) {
+        List<Integer> candidates = new ArrayList<>();
+        addYearCandidates(candidates, fileName);
+        if (parseResult != null && parseResult.getPages() != null) {
+            for (int i = 0; i < Math.min(2, parseResult.getPages().size()); i++) {
+                ParseResult.PageContent page = parseResult.getPages().get(i);
+                if (page != null) {
+                    addYearCandidates(candidates, page.getText());
+                }
+            }
+        }
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        return candidates.stream().max(Integer::compareTo).orElse(null);
+    }
+
+    private void addYearCandidates(List<Integer> candidates, String text) {
+        if (isBlank(text)) {
+            return;
+        }
         Matcher matcher = YEAR_PATTERN.matcher(text);
         int maxYear = LocalDate.now().getYear() + 1;
         while (matcher.find()) {
             int year = Integer.parseInt(matcher.group(1));
             if (year >= 1990 && year <= maxYear) {
-                return year;
+                candidates.add(year);
             }
         }
-        return null;
     }
 
     private String extractAuthors(ParseResult parseResult, String title) {

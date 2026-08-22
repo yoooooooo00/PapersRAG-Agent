@@ -8,60 +8,83 @@ import com.yooooo.rag.service.retrieval.ConfidenceFilter;
 import com.yooooo.rag.service.retrieval.ContextTrimmerService;
 import com.yooooo.rag.service.retrieval.EnhancedRetrieverService;
 import com.yooooo.rag.service.retrieval.HybridRetrieverService;
+import com.yooooo.rag.service.retrieval.QueryRoutingService;
 import com.yooooo.rag.service.retrieval.RerankerService;
 import java.io.IOException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * 支持 SSE 流式输出答案，并保存聊天消息和来源。
+ * Streaming paper QA with the same routing and retrieval strategy as sync QA.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class StreamingRagService {
+    private final HybridRetrieverService hybridRetriever;
     private final EnhancedRetrieverService enhancedRetriever;
+    private final QueryRoutingService queryRoutingService;
     private final RerankerService rerankerService;
     private final ConfidenceFilter confidenceFilter;
     private final ContextTrimmerService contextTrimmer;
+    private final RagContextBuilder contextBuilder;
     private final SourceBuilder sourceBuilder;
     private final ChatSessionService sessionService;
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final TokenMetrics tokenMetrics;
 
+    @Value("${reranker.top-n:5}")
+    private int rerankerTopN;
+
+    @Value("${rag.routing.simple-top-n:5}")
+    private int simpleTopN;
+
+    @Value("${rag.routing.standard-top-n:10}")
+    private int standardTopN;
+
+    @Value("${rag.routing.complex-candidate-top-n:20}")
+    private int complexCandidateTopN;
+
     public void streamQuery(String question, List<Long> kbIds, String sessionId, SseEmitter emitter) {
         long start = System.currentTimeMillis();
-        log.info("[StreamRAG] 流式问答开始 sessionId={} kbIds={} question={}", sessionId, kbIds, preview(question));
+        QueryRoutingService.QueryRoute route = queryRoutingService.classify(question);
+        log.info("[StreamRAG] start sessionId={} route={} kbIds={} question={}", sessionId, route, kbIds, preview(question));
 
         try {
             emitter.send(SseEmitter.event()
                     .name("status")
-                    .data("{\"type\":\"RETRIEVING\",\"message\":\"正在检索知识库...\"}"));
+                    .data("{\"type\":\"RETRIEVING\",\"message\":\"Retrieving knowledge base...\"}"));
 
-            var candidates = enhancedRetriever.retrieveWithHyde(question, kbIds, 20);
-            var reranked = rerankerService.rerank(question, candidates, 5);
-            var filtered = confidenceFilter.filter(reranked);
-            log.info("[StreamRAG] 检索完成 sessionId={} candidates={} reranked={} filtered={}",
-                    sessionId, candidates.size(), reranked.size(), filtered.size());
+            var candidates = retrieveByRoute(route, question, kbIds);
+            if (candidates.isEmpty()) {
+                sendNotFound(emitter);
+                log.info("[StreamRAG] no context sessionId={} elapsed={}ms", sessionId, System.currentTimeMillis() - start);
+                return;
+            }
+
+            var filtered = candidates;
+            log.info("[StreamRAG] retrieval done sessionId={} candidates={} filtered={}",
+                    sessionId, candidates.size(), filtered.size());
 
             if (filtered.isEmpty()) {
                 sendNotFound(emitter);
-                log.info("[StreamRAG] 未找到可用上下文 sessionId={} elapsed={}ms", sessionId, System.currentTimeMillis() - start);
+                log.info("[StreamRAG] no useful context sessionId={} elapsed={}ms", sessionId, System.currentTimeMillis() - start);
                 return;
             }
 
             var trimmed = contextTrimmer.trim(filtered);
             emitter.send(SseEmitter.event()
                     .name("status")
-                    .data("{\"type\":\"GENERATING\",\"message\":\"已找到相关内容，正在生成回答...\"}"));
+                    .data("{\"type\":\"GENERATING\",\"message\":\"Generating answer...\"}"));
 
-            String context = buildContext(trimmed);
-            String systemPrompt = RagPromptTemplate.buildSystemPrompt(context, trimmed.size());
+            String context = contextBuilder.buildContext(trimmed);
+            String systemPrompt = RagPromptTemplate.buildSystemPrompt(question, context, trimmed.size(), route);
             StringBuilder fullAnswer = new StringBuilder();
 
             chatClient.prompt()
@@ -72,12 +95,10 @@ public class StreamingRagService {
                     .doOnNext(token -> {
                         try {
                             fullAnswer.append(token);
-                            emitter.send(SseEmitter.event()
-                                    .name("token")
-                                    .data(token));
+                            emitter.send(SseEmitter.event().name("token").data(token));
                         } catch (IOException e) {
-                            log.warn("[StreamRAG] SSE token 推送失败 sessionId={} reason={}", sessionId, e.getMessage());
-                            throw new RuntimeException("SSE 连接断开", e);
+                            log.warn("[StreamRAG] SSE token send failed sessionId={} reason={}", sessionId, e.getMessage());
+                            throw new RuntimeException("SSE connection closed", e);
                         }
                     })
                     .blockLast();
@@ -95,40 +116,43 @@ public class StreamingRagService {
             emitter.send(SseEmitter.event().name("done").data(doneData));
             emitter.complete();
 
-            log.info("[StreamRAG] 流式问答完成 sessionId={} sources={} answerLength={} genTokens={} elapsed={}ms",
-                    sessionId, sources.size(), answer.length(), genTokens, latencyMs);
+            log.info("[StreamRAG] done sessionId={} route={} sources={} answerLength={} genTokens={} elapsed={}ms",
+                    sessionId, route, sources.size(), answer.length(), genTokens, latencyMs);
         } catch (Exception e) {
-            log.error("[StreamRAG] 流式问答失败 sessionId={} kbIds={} elapsed={}ms reason={}",
+            log.error("[StreamRAG] failed sessionId={} kbIds={} elapsed={}ms reason={}",
                     sessionId, kbIds, System.currentTimeMillis() - start, e.getMessage(), e);
             try {
                 emitter.send(SseEmitter.event()
                         .name("error")
-                        .data("{\"message\":\"生成失败：" + e.getMessage() + "\"}"));
+                        .data("{\"message\":\"Generation failed: " + escapeJson(e.getMessage()) + "\"}"));
                 emitter.complete();
             } catch (IOException sendError) {
-                log.debug("[StreamRAG] SSE error 推送失败 sessionId={} reason={}", sessionId, sendError.getMessage(), sendError);
+                log.debug("[StreamRAG] SSE error send failed sessionId={} reason={}", sessionId, sendError.getMessage(), sendError);
             }
         }
     }
 
     public RagResponse syncQuery(String question, List<Long> kbIds, String sessionId) {
         long start = System.currentTimeMillis();
-        log.info("[SyncRAG] 同步问答开始 sessionId={} kbIds={} question={}", sessionId, kbIds, preview(question));
+        QueryRoutingService.QueryRoute route = queryRoutingService.classify(question);
+        log.info("[SyncRAG] start sessionId={} route={} kbIds={} question={}", sessionId, route, kbIds, preview(question));
 
-        var candidates = enhancedRetriever.retrieveWithHyde(question, kbIds, 20);
-        var reranked = rerankerService.rerank(question, candidates, 5);
-        var filtered = confidenceFilter.filter(reranked);
-        log.info("[SyncRAG] 检索完成 sessionId={} candidates={} reranked={} filtered={}",
-                sessionId, candidates.size(), reranked.size(), filtered.size());
+        var candidates = retrieveByRoute(route, question, kbIds);
+        if (candidates.isEmpty()) {
+            return RagResponse.notFound();
+        }
+
+        var filtered = candidates;
+        log.info("[SyncRAG] retrieval done sessionId={} candidates={} filtered={}",
+                sessionId, candidates.size(), filtered.size());
 
         if (filtered.isEmpty()) {
-            log.info("[SyncRAG] 未找到可用上下文 sessionId={} elapsed={}ms", sessionId, System.currentTimeMillis() - start);
             return RagResponse.notFound();
         }
 
         var trimmed = contextTrimmer.trim(filtered);
-        String context = buildContext(trimmed);
-        String systemPrompt = RagPromptTemplate.buildSystemPrompt(context, trimmed.size());
+        String context = contextBuilder.buildContext(trimmed);
+        String systemPrompt = RagPromptTemplate.buildSystemPrompt(question, context, trimmed.size(), route);
         String answer = chatClient.prompt()
                 .system(systemPrompt)
                 .user(question)
@@ -143,8 +167,8 @@ public class StreamingRagService {
         int latencyMs = (int) (System.currentTimeMillis() - start);
         sessionService.saveMessage(sessionId, question, answer, sourcesJson, latencyMs);
 
-        log.info("[SyncRAG] 同步问答完成 sessionId={} sources={} answerLength={} genTokens={} elapsed={}ms",
-                sessionId, sources.size(), answer.length(), genTokens, latencyMs);
+        log.info("[SyncRAG] done sessionId={} route={} sources={} answerLength={} genTokens={} elapsed={}ms",
+                sessionId, route, sources.size(), answer.length(), genTokens, latencyMs);
         return RagResponse.builder()
                 .answer(answer)
                 .sources(sources)
@@ -152,21 +176,22 @@ public class StreamingRagService {
                 .build();
     }
 
-    private String buildContext(List<HybridRetrieverService.ScoredChunk> chunks) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < chunks.size(); i++) {
-            var sc = chunks.get(i);
-            sb.append("[参考").append(i + 1).append("]");
-            if (sc.chunk().getSectionTitle() != null) {
-                sb.append(" ").append(sc.chunk().getSectionTitle());
+    private List<HybridRetrieverService.ScoredChunk> retrieveByRoute(
+            QueryRoutingService.QueryRoute route,
+            String question,
+            List<Long> kbIds) {
+        return switch (route) {
+            case SIMPLE -> hybridRetriever.retrieveVectorOnly(question, kbIds, simpleTopN);
+            case STANDARD -> hybridRetriever.retrieve(question, kbIds, standardTopN);
+            case COMPLEX -> {
+                var candidates = enhancedRetriever.retrieveWithHyde(question, kbIds, complexCandidateTopN);
+                yield rerankerService.rerank(question, candidates, rerankerTopN);
             }
-            sb.append("\n").append(sc.content()).append("\n\n");
-        }
-        return sb.toString().strip();
+        };
     }
 
     private void sendNotFound(SseEmitter emitter) throws IOException {
-        String msg = "在知识库中未找到与该问题相关的内容。请尝试用不同关键词提问，或联系相关部门。";
+        String msg = "No relevant content was found in the knowledge base.";
         emitter.send(SseEmitter.event().name("token").data(msg));
         emitter.send(SseEmitter.event().name("done").data("{\"sources\":[]}"));
         emitter.complete();
@@ -179,8 +204,15 @@ public class StreamingRagService {
         return question.substring(0, Math.min(60, question.length()));
     }
 
+    private String escapeJson(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", " ");
+    }
+
     /**
-     * 流式回答结束时推送给前端的汇总数据。
+     * Payload returned when the streaming response finishes.
      */
     record DonePayload(List<RagResponse.Source> sources, int latencyMs) {}
 }

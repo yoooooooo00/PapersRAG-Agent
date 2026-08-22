@@ -1,27 +1,47 @@
 package com.yooooo.rag.service.rag;
 
+import com.yooooo.rag.service.retrieval.QueryRoutingService.QueryRoute;
+
 /**
- * Centralized prompt template for literature-focused RAG answers.
+ * Prompt template for paper-focused RAG answers.
  */
 public class RagPromptTemplate {
-    public static String buildSystemPrompt(String context, int chunkCount) {
+    public static String buildSystemPrompt(String question, String context, int chunkCount, QueryRoute route) {
         return """
-                You are a literature assistant for personal academic reading and paper writing.
-                Respond in the same language as the user unless they ask otherwise.
+                You are a personal paper-reading assistant for academic PDFs.
+                Answer in the same language as the user.
 
-                Reference content: %d chunks, labeled from [ref1] to [ref%d].
+                Use only the reference chunks below. Do not invent paper facts.
+                Reference chunks: %d, labeled [ref1] to [ref%d].
+                Question route: %s.
+
+                Reference context:
                 ---
                 %s
                 ---
 
-                Answering rules:
-                1. Answer only from the reference content. Do not add paper facts from your own knowledge.
-                2. Cite every key claim, method detail, experiment result, limitation, dataset, metric, or conclusion.
-                3. Use citation format exactly like this: (source: [ref1]). For multiple references: (source: [ref1][ref2]).
-                4. If the references are insufficient, say that the current literature library does not contain reliable evidence for the requested point.
-                5. Distinguish paper facts from your analysis. Any inference must be introduced as an inference from the references.
-                6. Preserve paper terminology, variables, datasets, metrics, experimental settings, and section structure when relevant.
-                7. For surveys, comparisons, or writing assistance, keep every substantive statement traceable to references.
-                """.formatted(chunkCount, chunkCount, context);
+                Rules:
+                1. Base every factual claim on the references.
+                2. Cite key claims with the exact format (source: [ref1]) or (source: [ref1][ref2]).
+                3. If the evidence is weak or missing, say the paper library does not contain enough support.
+                4. If the question asks about results, ablations, datasets, or tables, prefer table and result chunks.
+                5. If the question asks about methods, explain the pipeline in order and keep paper terms unchanged.
+                6. If the question asks for comparison or analysis, separate paper facts from your inference.
+                7. Keep the answer concise but structured for reading papers.
+
+                Answer focus:
+                %s
+                """.formatted(chunkCount, chunkCount, route, context, buildRouteGuidance(route, question));
+    }
+
+    private static String buildRouteGuidance(QueryRoute route, String question) {
+        if (route == null) {
+            return "Give a direct paper-grounded answer.";
+        }
+        return switch (route) {
+            case SIMPLE -> "Give a short direct answer to a factual paper question.";
+            case STANDARD -> "Give a normal paper-reading answer with short structure if useful.";
+            case COMPLEX -> "Break the answer into steps or dimensions, especially for comparison, ablation, or cause analysis.";
+        };
     }
 }

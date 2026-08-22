@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 public class ConfidenceFilter {
     @Value("${rag.retrieval.min-score:0.3}")
     private double minScore;
+
     public List<HybridRetrieverService.ScoredChunk> filter(
             List<HybridRetrieverService.ScoredChunk> chunks) {
         List<HybridRetrieverService.ScoredChunk> filtered = chunks.stream()
