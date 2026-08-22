@@ -174,7 +174,9 @@ CREATE TABLE IF NOT EXISTS kb_eval_result (
     dataset_id BIGINT NOT NULL,
     task_id BIGINT,
     eval_version VARCHAR(50) NOT NULL,
-    expected_route VARCHAR(20),`r`n    query_route VARCHAR(20),`r`n    route_base VARCHAR(20),`r`n    route_reason TEXT,`r`n    route_model_output TEXT,`r`n    hit BOOLEAN NOT NULL,
+    expected_route VARCHAR(20),
+    query_route VARCHAR(20),
+    hit BOOLEAN NOT NULL,
     rank INT,
     retrieved_chunk_ids BIGINT[],
     used_chunk_ids BIGINT[],
@@ -183,7 +185,11 @@ CREATE TABLE IF NOT EXISTS kb_eval_result (
     eval_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS query_route VARCHAR(20);`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS route_base VARCHAR(20);`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS route_reason TEXT;`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS route_model_output TEXT;`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS task_id BIGINT;`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS expected_route VARCHAR(20);`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS retrieved_chunk_ids BIGINT[];`r`nALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS used_chunk_ids BIGINT[];
+ALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS query_route VARCHAR(20);
+ALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS task_id BIGINT;
+ALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS expected_route VARCHAR(20);
+ALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS retrieved_chunk_ids BIGINT[];
+ALTER TABLE kb_eval_result ADD COLUMN IF NOT EXISTS used_chunk_ids BIGINT[];
 ALTER TABLE kb_eval_result DROP COLUMN IF EXISTS answer_relevancy;
 
 CREATE TABLE IF NOT EXISTS kb_eval_task (
@@ -289,3 +295,8 @@ CREATE INDEX IF NOT EXISTS idx_paper_relation_target
     ON paper_relation (target_paper_id) WHERE is_deleted = FALSE;
 CREATE INDEX IF NOT EXISTS idx_paper_relation_type
     ON paper_relation (relation_type) WHERE is_deleted = FALSE;
+
+
+
+
+

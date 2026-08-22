@@ -229,9 +229,6 @@ public class EvalController {
         view.setRetrievedChunkIds(result.getRetrievedChunkIds());
         view.setUsedChunkIds(result.getUsedChunkIds());
         view.setQueryRoute(result.getQueryRoute());
-        view.setRouteBase(result.getRouteBase());
-        view.setRouteReason(result.getRouteReason());
-        view.setRouteModelOutput(result.getRouteModelOutput());
         view.setRouteMatch(dataset != null
                 && dataset.getExpectedRoute() != null
                 && result.getQueryRoute() != null
@@ -310,9 +307,6 @@ public class EvalController {
         private Long[] retrievedChunkIds;
         private Long[] usedChunkIds;
         private QueryRoutingService.QueryRoute queryRoute;
-        private QueryRoutingService.QueryRoute routeBase;
-        private String routeReason;
-        private String routeModelOutput;
         private Boolean routeMatch;
         private Boolean hit;
         private Integer rank;
@@ -322,5 +316,3 @@ public class EvalController {
         private LocalDateTime evalAt;
     }
 }
-
-
