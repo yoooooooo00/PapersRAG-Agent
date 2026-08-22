@@ -194,7 +194,8 @@ public class EvalService {
     }
 
     private EvalResult evaluateOne(EvalDataset question, Long taskId, Long kbId, String evalVersion) {
-        QueryRoutingService.QueryRoute route = queryRoutingService.classify(question.getQuestion());
+        QueryRoutingService.RouteDecision routeDecision = queryRoutingService.classifyDetailed(question.getQuestion());
+        QueryRoutingService.QueryRoute route = routeDecision.finalRoute();
         List<HybridRetrieverService.ScoredChunk> candidates = retrieveByRoute(route, question.getQuestion(), kbId);
         Long[] retrievedChunkIds = candidates.stream()
                 .map(HybridRetrieverService.ScoredChunk::id)
@@ -244,6 +245,9 @@ public class EvalService {
         result.setDatasetId(question.getId());
         result.setEvalVersion(evalVersion);
         result.setQueryRoute(route);
+        result.setRouteBase(routeDecision.baseRoute());
+        result.setRouteReason(routeDecision.reason());
+        result.setRouteModelOutput(routeDecision.modelOutput());
         result.setHit(hit);
         result.setRank(rank);
         result.setRetrievedChunkIds(retrievedChunkIds);
@@ -303,3 +307,5 @@ public class EvalService {
         return taskRepository.findById(taskId).orElseThrow(() -> new RuntimeException("Evaluation task not found: " + taskId));
     }
 }
+
+

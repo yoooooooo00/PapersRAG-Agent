@@ -40,6 +40,16 @@ public class EvalResult {
     @Column(name = "query_route", length = 20)
     private QueryRoutingService.QueryRoute queryRoute;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "route_base", length = 20)
+    private QueryRoutingService.QueryRoute routeBase;
+
+    @Column(name = "route_reason", columnDefinition = "TEXT")
+    private String routeReason;
+
+    @Column(name = "route_model_output", columnDefinition = "TEXT")
+    private String routeModelOutput;
+
     @Column(nullable = false)
     private Boolean hit;
 

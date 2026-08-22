@@ -22,6 +22,13 @@ public class QueryRoutingService {
         COMPLEX
     }
 
+    public record RouteDecision(
+            QueryRoute baseRoute,
+            QueryRoute finalRoute,
+            String reason,
+            String modelOutput) {
+    }
+
     private static final Pattern COMPLEX_PATTERN = Pattern.compile(
             "(?i)(compare|comparison|difference|why|cause|reason|impact|tradeoff|ablation|versus|vs\\.|between|multi[- ]step|cross[- ]paper|overall summary)");
     private static final Pattern SIMPLE_PATTERN = Pattern.compile(
@@ -34,8 +41,12 @@ public class QueryRoutingService {
 
     @Cacheable(value = "query-route-cache", key = "#question.hashCode()")
     public QueryRoute classify(String question) {
+        return classifyDetailed(question).finalRoute();
+    }
+
+    public RouteDecision classifyDetailed(String question) {
         if (!enabled || question == null || question.isBlank()) {
-            return QueryRoute.STANDARD;
+            return new RouteDecision(QueryRoute.STANDARD, QueryRoute.STANDARD, "disabled-or-blank", null);
         }
 
         try {
@@ -55,13 +66,14 @@ public class QueryRoutingService {
                     .content();
 
             QueryRoute baseRoute = parse(result);
-            QueryRoute route = upgradeForPaperSignals(baseRoute, question);
-            log.info("[QueryRouting] baseRoute={} route={} question={}", baseRoute, route, preview(question));
-            return route;
+            RouteDecision decision = upgradeForPaperSignals(baseRoute, question, result);
+            log.info("[QueryRouting] baseRoute={} route={} reason={} question={}", baseRoute, decision.finalRoute(), decision.reason(), preview(question));
+            return new RouteDecision(baseRoute, decision.finalRoute(), decision.reason(), result);
         } catch (Exception e) {
             QueryRoute fallback = heuristic(question);
+            String reason = "fallback:" + e.getClass().getSimpleName();
             log.warn("[QueryRouting] classifier failed, fallback route={} error={}", fallback, e.getMessage());
-            return fallback;
+            return new RouteDecision(fallback, fallback, reason, null);
         }
     }
 
@@ -82,15 +94,15 @@ public class QueryRoutingService {
         return QueryRoute.STANDARD;
     }
 
-    private QueryRoute upgradeForPaperSignals(QueryRoute route, String question) {
+    private RouteDecision upgradeForPaperSignals(QueryRoute route, String question, String modelOutput) {
         String q = question == null ? "" : question.toLowerCase(Locale.ROOT);
         if (COMPLEX_PATTERN.matcher(q).find()) {
-            return QueryRoute.COMPLEX;
+            return new RouteDecision(route, QueryRoute.COMPLEX, "complex-keyword", modelOutput);
         }
         if (SIMPLE_PATTERN.matcher(q).find() && q.length() <= 40) {
-            return QueryRoute.SIMPLE;
+            return new RouteDecision(route, QueryRoute.SIMPLE, "simple-keyword", modelOutput);
         }
-        return route;
+        return new RouteDecision(route, route, "model-route", modelOutput);
     }
 
     private QueryRoute heuristic(String question) {
