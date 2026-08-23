@@ -2,11 +2,8 @@ package com.yooooo.rag.service.splitter;
 
 import com.yooooo.rag.service.loader.ParseResult;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
@@ -21,11 +18,7 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
     private static final Pattern BLOCK_MARKER = Pattern.compile(
             "(?s)(?:\\[TABLE_CAPTION](.*?)\\[/TABLE_CAPTION]\\s*)?\\[TABLE](.*?)\\[/TABLE]|\\[FIGURE_CAPTION](.*?)\\[/FIGURE_CAPTION]");
     private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("(?is)\\b(?:abstract|摘要)\\b");
-    private static final Set<String> KNOWN_METRICS = Set.of(
-            "MRR", "HITS@1", "HITS@3", "HITS@5", "HITS@10", "HIT@1", "HIT@3", "HIT@10",
-            "ACC", "ACCURACY", "F1", "PRECISION", "RECALL", "AUC", "MAP", "NDCG", "MAE", "RMSE");
-    private static final Pattern DATASET_PATTERN = Pattern.compile(
-            "(?i)\\b(ICEWS(?:05-15|14|18)?|GDELT|YAGO(?:11k)?|WIKI(?:DATA)?|FB15K(?:-237)?|WN18RR|NELL|UMLS|DBPEDIA|ACLED|WIKIDATA(?:12k)?)\\b");
+
     private final SlidingWindowChunkSplitter slidingSplitter = new SlidingWindowChunkSplitter();
 
     @Override
@@ -39,7 +32,24 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                 continue;
             }
             if ("TABLE".equals(section.contentType())) {
-                String summary = buildTableSummary(section);
+                ParsedTable parsedTable = parseMarkdownTable(section.text());
+                if (parsedTable.rows().size() < 2) {
+                    chunks.add(ChunkResult.builder()
+                            .chunkIndex(chunkIndex++)
+                            .content(section.text())
+                            .rawContent(section.text())
+                            .pageNum(section.pageNum())
+                            .sectionTitle(section.title())
+                            .sectionType(section.sectionType())
+                            .contentType("TEXT")
+                            .estimatedTokens(estimateTokens(section.text()))
+                            .build());
+                    continue;
+                }
+                String summary = section.text()
+                        .replace("[TABLE]", "")
+                        .replace("[/TABLE]", "")
+                        .strip();
                 chunks.add(ChunkResult.builder()
                         .chunkIndex(chunkIndex++)
                         .content(summary)
@@ -114,6 +124,7 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         String currentSectionType = null;
         String currentContentType = null;
         int currentPage = 1;
+        boolean pageOneBodyStarted = false;
 
         for (ParseResult.PageContent page : parseResult.getPages()) {
             if (page.getText() == null || page.getText().isBlank()) {
@@ -121,6 +132,15 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
             }
 
             String pageText = page.getText();
+            if (page.getPageNum() == 1 && !pageOneBodyStarted
+                    && (page.getSectionType() == null || page.getSectionType().isBlank())) {
+                sections.add(new TextSection(null, "FRONTMATTER", "FRONTMATTER",
+                        pageText, page.getPageNum(), null));
+                continue;
+            }
+            if (page.getPageNum() != 1 || hasSectionMetadata(page)) {
+                pageOneBodyStarted = true;
+            }
             if (page.getPageNum() == 1) {
                 FrontmatterSplit split = splitFrontMatter(pageText);
                 if (split.frontMatter() != null && !split.frontMatter().isBlank()) {
@@ -129,12 +149,12 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                 pageText = split.body();
             }
 
-            boolean sectionChanged = current.length() > 0
-                    && hasSectionMetadata(page)
+            boolean pageChanged = current.length() > 0 && currentPage != page.getPageNum();
+            boolean sectionChanged = current.length() > 0 && hasSectionMetadata(page)
                     && (!Objects.equals(currentSectionType, page.getSectionType())
                     || !Objects.equals(currentTitle, page.getSectionTitle()));
 
-            if (sectionChanged) {
+            if (pageChanged || sectionChanged) {
                 addTextSection(sections, currentTitle, currentSectionType, currentContentType, current.toString(), currentPage);
                 current = new StringBuilder();
             }
@@ -155,6 +175,10 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
                 }
                 addTextSection(sections, currentTitle, currentSectionType, currentContentType, current.toString(), currentPage);
                 current = new StringBuilder();
+                currentTitle = page.getSectionTitle();
+                currentSectionType = page.getSectionType();
+                currentContentType = page.getContentType();
+                currentPage = page.getPageNum();
 
                 String tableCaption = cleanMarkerText(matcher.group(1));
                 String rawTable = matcher.group(2) == null ? "" : matcher.group(2).strip();
@@ -198,32 +222,6 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
         }
     }
 
-    private String buildTableSummary(TextSection section) {
-        ParsedTable table = parseMarkdownTable(section.text());
-        Set<String> datasets = extractDatasets(section.tableCaption(), section.text());
-        Set<String> metrics = extractMetrics(table.headers(), section.tableCaption(), section.text());
-        Set<String> methods = extractMethods(table);
-        Set<String> keywords = inferTableKeywords(section.tableCaption(), section.title(), section.sectionType());
-
-        List<String> lines = new ArrayList<>();
-        addLine(lines, "Table caption", section.tableCaption());
-        addLine(lines, "Section", section.title());
-        addLine(lines, "Section type", section.sectionType());
-        addLine(lines, "Page", String.valueOf(section.pageNum()));
-        if (!table.headers().isEmpty()) {
-            lines.add("Header columns: " + String.join(", ", table.headers()) + ".");
-        }
-        if (!table.rows().isEmpty()) {
-            lines.add("Row count: " + table.rows().size() + ".");
-        }
-        if (!datasets.isEmpty()) lines.add("Datasets mentioned: " + String.join(", ", datasets) + ".");
-        if (!metrics.isEmpty()) lines.add("Metrics mentioned: " + String.join(", ", metrics) + ".");
-        if (!methods.isEmpty()) lines.add("Methods or variants mentioned: " + String.join(", ", methods) + ".");
-        if (!keywords.isEmpty()) lines.add("Retrieval keywords: " + String.join(", ", keywords) + ".");
-        lines.add("This is a table extracted from the paper; use the raw table as evidence for exact values.");
-        return String.join("\n", lines).strip();
-    }
-
     private ParsedTable parseMarkdownTable(String rawTable) {
         List<String> headers = new ArrayList<>();
         List<List<String>> rows = new ArrayList<>();
@@ -259,86 +257,6 @@ public class StructureAwareChunkSplitter implements ChunkSplitter {
 
     private boolean isSeparatorRow(List<String> cells) {
         return cells.stream().allMatch(cell -> cell.matches("^:?-{3,}:?$"));
-    }
-
-    private Set<String> extractDatasets(String caption, String rawTable) {
-        Set<String> values = new LinkedHashSet<>();
-        Matcher matcher = DATASET_PATTERN.matcher((caption == null ? "" : caption) + "\n" + rawTable);
-        while (matcher.find()) {
-            values.add(matcher.group(1));
-        }
-        return values;
-    }
-
-    private Set<String> extractMetrics(List<String> headers, String caption, String rawTable) {
-        Set<String> values = new LinkedHashSet<>();
-        String text = String.join(" ", headers) + " " + nullToBlank(caption) + " " + rawTable;
-        String upper = text.toUpperCase(Locale.ROOT);
-        for (String metric : KNOWN_METRICS) {
-            if (upper.contains(metric)) {
-                values.add(metric);
-            }
-        }
-        return values;
-    }
-
-    private Set<String> extractMethods(ParsedTable table) {
-        Set<String> values = new LinkedHashSet<>();
-        if (table.rows().isEmpty()) {
-            return values;
-        }
-        int methodColumn = resolveMethodColumn(table.headers());
-        if (methodColumn < 0) {
-            return values;
-        }
-        for (List<String> row : table.rows()) {
-            if (methodColumn < row.size()) {
-                String method = row.get(methodColumn).replace("*", "").strip();
-                if (looksLikeMethodName(method)) {
-                    values.add(method);
-                }
-            }
-            if (values.size() >= 20) {
-                break;
-            }
-        }
-        return values;
-    }
-
-    private int resolveMethodColumn(List<String> headers) {
-        for (int i = 0; i < headers.size(); i++) {
-            String lower = headers.get(i).toLowerCase(Locale.ROOT);
-            if (lower.contains("method") || lower.contains("model") || lower.contains("approach")
-                    || lower.contains("variant") || lower.contains("setting")) {
-                return i;
-            }
-        }
-        return headers.isEmpty() ? -1 : 0;
-    }
-
-    private boolean looksLikeMethodName(String value) {
-        if (value == null || value.isBlank() || value.length() > 80) {
-            return false;
-        }
-        return !value.matches("^[0-9.,%+ -]+$");
-    }
-
-    private Set<String> inferTableKeywords(String caption, String sectionTitle, String sectionType) {
-        Set<String> keywords = new LinkedHashSet<>();
-        keywords.add("table");
-        keywords.add("experimental results");
-        String text = (nullToBlank(caption) + " " + nullToBlank(sectionTitle) + " " + nullToBlank(sectionType)).toLowerCase(Locale.ROOT);
-        if (text.contains("ablation")) keywords.add("ablation study");
-        if (text.contains("baseline") || text.contains("comparison") || text.contains("compare")) keywords.add("baseline comparison");
-        if (text.contains("dataset")) keywords.add("dataset statistics");
-        if (text.contains("result") || text.contains("experiment") || text.contains("evaluation")) keywords.add("performance comparison");
-        return keywords;
-    }
-
-    private void addLine(List<String> lines, String label, String value) {
-        if (value != null && !value.isBlank() && !"null".equals(value)) {
-            lines.add(label + ": " + value.strip());
-        }
     }
 
     private String cleanMarkerText(String text) {

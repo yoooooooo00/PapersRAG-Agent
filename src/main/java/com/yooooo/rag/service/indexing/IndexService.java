@@ -13,6 +13,7 @@ import com.yooooo.rag.service.document.DocumentLoaderService;
 import com.yooooo.rag.service.embedding.EmbeddingService;
 import com.yooooo.rag.service.loader.ParseResult;
 import com.yooooo.rag.service.paper.PaperMetadataExtractor;
+import com.yooooo.rag.service.retrieval.QueryCacheService;
 import com.yooooo.rag.service.splitter.ChunkResult;
 import com.yooooo.rag.service.splitter.ChunkService;
 import com.yooooo.rag.service.storage.MinioStorageService;
@@ -42,6 +43,8 @@ public class IndexService {
     private final PaperRepository paperRepository;
     private final PaperMetadataExtractor paperMetadataExtractor;
     private final ChunkEmbeddingTextBuilder chunkEmbeddingTextBuilder;
+    private final QueryCacheService queryCacheService;
+    private final IndexQualityValidator indexQualityValidator;
 
     public void submitIndexTask(Long docId, String textContent) {
         IndexTask task = new IndexTask();
@@ -117,6 +120,7 @@ public class IndexService {
 
             List<ChunkResult> chunks = chunkService.chunk(parseResult);
             List<ChunkEmbeddingTextBuilder.IndexableChunk> indexableChunks = chunkEmbeddingTextBuilder.build(paper, doc.getFileName(), chunks);
+            indexQualityValidator.validateOrThrow(parseResult, indexableChunks);
             if (indexableChunks.isEmpty()) {
                 throw new RuntimeException("Chunk result is empty; the document may contain no valid text.");
             }
@@ -128,6 +132,7 @@ public class IndexService {
 
             List<float[]> embeddings = embeddingService.embedBatch(texts);
 
+            chunkRepository.deleteByDocIdAndDocVersion(docId, doc.getVersion());
             chunkRepository.deleteByDocIdAndDocVersionLessThan(docId, doc.getVersion());
 
             List<DocChunk> docChunks = new ArrayList<>();
@@ -156,6 +161,7 @@ public class IndexService {
             }
 
             batchInsertChunks(docChunks);
+            queryCacheService.clearAll();
 
             doc.setStatus(KbDocument.DocumentStatus.DONE);
             doc.setChunkCount(indexableChunks.size());

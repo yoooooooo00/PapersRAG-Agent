@@ -1,6 +1,7 @@
 package com.yooooo.rag.service.eval;
 
 import com.yooooo.rag.dto.EvalReport;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yooooo.rag.dto.RagResponse;
 import com.yooooo.rag.entity.EvalDataset;
 import com.yooooo.rag.entity.EvalResult;
@@ -22,6 +23,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,6 +53,7 @@ public class EvalService {
     private final HallucinationChecker hallucinationChecker;
     private final StreamingRagService ragService;
     private final QueryRoutingService queryRoutingService;
+    private final ObjectMapper objectMapper;
 
     @Value("${reranker.top-n:5}")
     private int rerankerTopN;
@@ -63,6 +66,9 @@ public class EvalService {
 
     @Value("${rag.routing.complex-candidate-top-n:20}")
     private int complexCandidateTopN;
+
+    @Value("${rag.routing.simple-as-standard-experiment:false}")
+    private boolean simpleAsStandardExperiment;
 
     public EvalTask submitEvaluation(Long kbId, String evalVersion) {
         List<EvalDataset> questions = datasetRepository.findByKbId(kbId);
@@ -195,7 +201,8 @@ public class EvalService {
 
     private EvalResult evaluateOne(EvalDataset question, Long taskId, Long kbId, String evalVersion) {
         QueryRoutingService.QueryRoute route = queryRoutingService.classify(question.getQuestion());
-        List<HybridRetrieverService.ScoredChunk> candidates = retrieveByRoute(route, question.getQuestion(), kbId);
+        HybridRetrieverService.RetrievalOutcome retrieval = retrieveByRouteWithTrace(route, question.getQuestion(), kbId);
+        List<HybridRetrieverService.ScoredChunk> candidates = retrieval.getChunks();
         Long[] retrievedChunkIds = candidates.stream()
                 .map(HybridRetrieverService.ScoredChunk::id)
                 .toArray(Long[]::new);
@@ -223,10 +230,16 @@ public class EvalService {
         String actualAnswer = null;
         Double faithfulness = null;
         Long[] usedChunkIds = new Long[0];
+        QueryRoutingService.QueryRoute answerRoute = null;
+        Long[] answerRetrievedChunkIds = new Long[0];
+        Long[] answerTrimmedChunkIds = new Long[0];
 
         if (question.getExpectedAnswer() != null) {
             RagResponse response = ragService.syncQuery(question.getQuestion(), List.of(kbId), "eval-session");
             actualAnswer = response.getAnswer();
+            answerRoute = response.getQueryRoute();
+            answerRetrievedChunkIds = response.getRetrievedChunkIds() == null ? new Long[0] : response.getRetrievedChunkIds();
+            answerTrimmedChunkIds = response.getTrimmedChunkIds() == null ? new Long[0] : response.getTrimmedChunkIds();
             usedChunkIds = response.getSources() == null ? new Long[0] : response.getSources().stream()
                     .map(RagResponse.Source::getChunkId)
                     .filter(Objects::nonNull)
@@ -243,17 +256,93 @@ public class EvalService {
         result.setTaskId(taskId);
         result.setDatasetId(question.getId());
         result.setEvalVersion(evalVersion);
+        result.setExpectedRoute(question.getExpectedRoute());
         result.setQueryRoute(route);
         result.setHit(hit);
         result.setRank(rank);
         result.setRetrievedChunkIds(retrievedChunkIds);
         result.setUsedChunkIds(usedChunkIds);
         result.setActualAnswer(actualAnswer);
+        result.setRouteTrace(toJson(buildRouteTrace(question, route, answerRoute, hit, rank, retrievedChunkIds, usedChunkIds)));
+        result.setRetrievalTrace(toJson(retrieval.getTrace()));
+        result.setFinalTrace(toJson(buildFinalTrace(question, route, answerRoute, retrievedChunkIds, answerRetrievedChunkIds, answerTrimmedChunkIds, trimmed, usedChunkIds, hit, rank)));
         result.setFaithfulness(faithfulness);
         result.setEvalAt(LocalDateTime.now());
 
         log.info("[Eval] questionId={} route={} hit={} rank={}", question.getId(), route, hit, rank);
         return result;
+    }
+
+    private HybridRetrieverService.RetrievalOutcome retrieveByRouteWithTrace(
+            QueryRoutingService.QueryRoute route,
+            String question,
+            Long kbId) {
+        List<Long> kbIds = List.of(kbId);
+        return switch (route) {
+            case SIMPLE -> simpleAsStandardExperiment
+                    ? hybridRetriever.retrieveWithTrace(question, kbIds, standardTopN)
+                    : hybridRetriever.retrieveVectorOnlyWithTrace(question, kbIds, simpleTopN);
+            case STANDARD -> hybridRetriever.retrieveWithTrace(question, kbIds, standardTopN);
+            case COMPLEX -> enhancedRetriever.retrieveWithTrace(question, kbIds, complexCandidateTopN);
+        };
+    }
+
+    private Map<String, Object> buildRouteTrace(
+            EvalDataset question,
+            QueryRoutingService.QueryRoute evalRoute,
+            QueryRoutingService.QueryRoute answerRoute,
+            boolean hit,
+            Integer rank,
+            Long[] retrievedChunkIds,
+            Long[] usedChunkIds) {
+        Map<String, Object> trace = new LinkedHashMap<>();
+        trace.put("datasetId", question.getId());
+        trace.put("expectedRoute", question.getExpectedRoute());
+        trace.put("evalRoute", evalRoute);
+        trace.put("answerRoute", answerRoute);
+        trace.put("routeMatch", question.getExpectedRoute() != null && question.getExpectedRoute() == evalRoute);
+        trace.put("hit", hit);
+        trace.put("rank", rank);
+        trace.put("retrievedChunkIds", retrievedChunkIds);
+        trace.put("usedChunkIds", usedChunkIds);
+        return trace;
+    }
+
+    private Map<String, Object> buildFinalTrace(
+            EvalDataset question,
+            QueryRoutingService.QueryRoute evalRoute,
+            QueryRoutingService.QueryRoute answerRoute,
+            Long[] evalRetrievedChunkIds,
+            Long[] answerRetrievedChunkIds,
+            Long[] answerTrimmedChunkIds,
+            List<HybridRetrieverService.ScoredChunk> evalTrimmedChunks,
+            Long[] usedChunkIds,
+            boolean hit,
+            Integer rank) {
+        Map<String, Object> trace = new LinkedHashMap<>();
+        trace.put("datasetId", question.getId());
+        trace.put("expectedChunkIds", question.getExpectedChunkIds());
+        trace.put("evalRoute", evalRoute);
+        trace.put("answerRoute", answerRoute);
+        trace.put("evalRetrievedChunkIds", evalRetrievedChunkIds);
+        trace.put("evalTrimmedChunkIds", evalTrimmedChunks.stream().map(HybridRetrieverService.ScoredChunk::id).toArray(Long[]::new));
+        trace.put("answerRetrievedChunkIds", answerRetrievedChunkIds);
+        trace.put("answerTrimmedChunkIds", answerTrimmedChunkIds);
+        trace.put("usedChunkIds", usedChunkIds);
+        trace.put("hit", hit);
+        trace.put("rank", rank);
+        trace.put("retrievalTruncated", evalTrimmedChunks.size() < evalRetrievedChunkIds.length);
+        trace.put("answerTruncated", answerTrimmedChunkIds.length < answerRetrievedChunkIds.length);
+        return trace;
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            log.warn("[Eval] failed to serialize trace: {}", e.getMessage());
+            return String.valueOf(value);
+        }
     }
 
     private void logRouteHitRates(Map<QueryRoutingService.QueryRoute, long[]> routeStats) {
@@ -275,7 +364,9 @@ public class EvalService {
             Long kbId) {
         List<Long> kbIds = List.of(kbId);
         return switch (route) {
-            case SIMPLE -> hybridRetriever.retrieveVectorOnly(question, kbIds, simpleTopN);
+            case SIMPLE -> simpleAsStandardExperiment
+                    ? hybridRetriever.retrieve(question, kbIds, standardTopN)
+                    : hybridRetriever.retrieveVectorOnly(question, kbIds, simpleTopN);
             case STANDARD -> hybridRetriever.retrieve(question, kbIds, standardTopN);
             case COMPLEX -> {
                 var candidates = enhancedRetriever.retrieveWithHyde(question, kbIds, complexCandidateTopN);
@@ -303,3 +394,4 @@ public class EvalService {
         return taskRepository.findById(taskId).orElseThrow(() -> new RuntimeException("Evaluation task not found: " + taskId));
     }
 }
+

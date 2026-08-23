@@ -216,7 +216,13 @@ public class SlidingWindowChunkSplitter implements ChunkSplitter {
         }
 
         if (seed.isEmpty() && !sentences.isEmpty()) {
-            seed.add(sentences.get(sentences.size() - 1).strip());
+            String last = sentences.get(sentences.size() - 1).strip();
+            if (overlap > 0 && last.length() > overlap) {
+                last = last.substring(last.length() - overlap).strip();
+            }
+            if (!last.isBlank()) {
+                seed.add(last);
+            }
         }
         return seed;
     }

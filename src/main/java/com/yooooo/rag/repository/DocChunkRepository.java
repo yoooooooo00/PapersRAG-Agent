@@ -18,6 +18,11 @@ public interface DocChunkRepository extends JpaRepository<DocChunk, Long> {
     void deleteByDocIdAndDocVersionLessThan(@Param("docId") Long docId,
                                             @Param("version") Integer version);
 
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM DocChunk c WHERE c.docId = :docId AND c.docVersion = :version")
+    void deleteByDocIdAndDocVersion(@Param("docId") Long docId,
+                                    @Param("version") Integer version);
     @Query(value = """
             SELECT *
             FROM kb_doc_chunk
@@ -70,7 +75,8 @@ public interface DocChunkRepository extends JpaRepository<DocChunk, Long> {
             @Param("tsQuery") String tsQuery,
             @Param("topK") int topK);
 
-    List<DocChunk> findByDocId(Long docId);
+    @Query("SELECT c FROM DocChunk c WHERE c.docId = :docId ORDER BY c.chunkIndex ASC")
+    List<DocChunk> findByDocId(@Param("docId") Long docId);
 
     @Modifying
     @Transactional

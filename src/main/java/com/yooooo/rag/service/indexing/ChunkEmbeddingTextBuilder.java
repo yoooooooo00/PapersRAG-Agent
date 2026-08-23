@@ -5,15 +5,18 @@ import com.yooooo.rag.service.splitter.ChunkResult;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ChunkEmbeddingTextBuilder {
+    private static final Pattern TABLE_CAPTION_PATTERN = Pattern.compile("(?s)\\[TABLE_CAPTION\\](.*?)\\[/TABLE_CAPTION\\]");
     public List<IndexableChunk> build(Paper paper, String fileName, List<ChunkResult> chunks) {
         List<IndexableChunk> result = new ArrayList<>();
         int syntheticIndex = chunks == null ? 0 : chunks.size();
 
-        String paperMetadata = buildPaperMetadataEmbeddingText(paper, fileName);
+        String paperMetadata = buildPaperMetadataEmbeddingText(paper);
         if (!isBlank(paperMetadata)) {
             ChunkResult metadataChunk = ChunkResult.builder()
                     .chunkIndex(syntheticIndex++)
@@ -38,6 +41,12 @@ public class ChunkEmbeddingTextBuilder {
                 result.add(new IndexableChunk(chunk, embeddingText));
             }
         }
+
+        // References and other skipped sections can leave gaps in the splitter's
+        // original indexes. Re-number the actual indexed chunks contiguously.
+        for (int i = 0; i < result.size(); i++) {
+            result.get(i).chunk().setChunkIndex(i);
+        }
         return result;
     }
 
@@ -45,44 +54,51 @@ public class ChunkEmbeddingTextBuilder {
         if (chunk == null) {
             return true;
         }
+        String contentType = normalizeContentType(chunk.getContentType(), chunk.getContent());
+        if ("FRONTMATTER".equalsIgnoreCase(chunk.getSectionType())
+                || "FRONTMATTER".equalsIgnoreCase(contentType)) {
+            return true;
+        }
         return "REFERENCES".equalsIgnoreCase(chunk.getSectionType())
-                && !"TABLE".equalsIgnoreCase(normalizeContentType(chunk.getContentType(), chunk.getContent()));
+                && !"TABLE".equalsIgnoreCase(contentType);
     }
 
-    private String buildPaperMetadataEmbeddingText(Paper paper, String fileName) {
+    private String buildPaperMetadataEmbeddingText(Paper paper) {
         if (paper == null) {
             return null;
         }
         List<String> parts = new ArrayList<>();
         addField(parts, "Paper title", paper.getTitle());
+        addField(parts, "Publication year", paper.getYear() == null ? null : String.valueOf(paper.getYear()));
         addField(parts, "Authors", paper.getAuthors());
-        addField(parts, "Year", paper.getYear() == null ? null : String.valueOf(paper.getYear()));
-        addField(parts, "Venue", paper.getVenue());
-        addField(parts, "DOI", paper.getDoi());
-        addField(parts, "arXiv", paper.getArxivId());
-        addField(parts, "Keywords", paper.getKeywords());
-        addField(parts, "Abstract", paper.getAbstractText());
-        addField(parts, "Source file", fileName);
+        addField(parts, "Affiliations", paper.getAffiliations());
         return String.join("\n", parts).strip();
     }
 
     private String buildChunkEmbeddingText(Paper paper, String fileName, ChunkResult chunk) {
         List<String> parts = new ArrayList<>();
-        if (paper != null) {
-            addField(parts, "Paper title", paper.getTitle());
-            addField(parts, "Authors", paper.getAuthors());
-            addField(parts, "Year", paper.getYear() == null ? null : String.valueOf(paper.getYear()));
-        }
-        addField(parts, "Source file", fileName);
+        // Paper identity is indexed by the dedicated metadata chunk. Repeating it in every
+        // chunk dilutes the section/content signal for short chunks and tables.
         addField(parts, "Section", chunk.getSectionTitle());
         addField(parts, "Section type", chunk.getSectionType());
         addField(parts, "Page", chunk.getPageNum() == null ? null : String.valueOf(chunk.getPageNum()));
-        addField(parts, "Table caption", chunk.getTableCaption());
+        addField(parts, "Table caption", resolveTableCaption(chunk));
 
         String contentType = normalizeContentType(chunk.getContentType(), chunk.getContent());
         addField(parts, "Content type", contentType);
         addField(parts, "Content", normalizeChunkContent(chunk, contentType));
         return String.join("\n", parts).strip();
+    }
+
+    private String resolveTableCaption(ChunkResult chunk) {
+        if (!isBlank(chunk.getTableCaption())) {
+            return chunk.getTableCaption();
+        }
+        if (chunk.getContent() == null) {
+            return null;
+        }
+        Matcher matcher = TABLE_CAPTION_PATTERN.matcher(chunk.getContent());
+        return matcher.find() ? matcher.group(1).strip() : null;
     }
 
     private String normalizeChunkContent(ChunkResult chunk, String contentType) {

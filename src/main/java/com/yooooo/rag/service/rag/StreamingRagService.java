@@ -38,6 +38,7 @@ public class StreamingRagService {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final TokenMetrics tokenMetrics;
+    private final FullRagPipeline fullRagPipeline;
 
     @Value("${reranker.top-n:5}")
     private int rerankerTopN;
@@ -51,9 +52,22 @@ public class StreamingRagService {
     @Value("${rag.routing.complex-candidate-top-n:20}")
     private int complexCandidateTopN;
 
+    @Value("${rag.routing.simple-as-standard-experiment:false}")
+    private boolean simpleAsStandardExperiment;
+
     public void streamQuery(String question, List<Long> kbIds, String sessionId, SseEmitter emitter) {
         long start = System.currentTimeMillis();
-        QueryRoutingService.QueryRoute route = queryRoutingService.classify(question);
+        RagResponse cached = fullRagPipeline.getCached(question, kbIds);
+        if (cached != null) {
+            try {
+                emitter.send(SseEmitter.event().name("token").data(cached.getAnswer()));
+                emitter.send(SseEmitter.event().name("done").data(objectMapper.writeValueAsString(new DonePayload(cached.getSources(), 0))));
+                emitter.complete();
+            } catch (IOException e) { emitter.completeWithError(e); }
+            return;
+        }
+        FullRagPipeline.QueryPlan plan = fullRagPipeline.prepare(question, kbIds);
+        QueryRoutingService.QueryRoute route = plan.route();
         log.info("[StreamRAG] start sessionId={} route={} kbIds={} question={}", sessionId, route, kbIds, preview(question));
 
         try {
@@ -61,7 +75,7 @@ public class StreamingRagService {
                     .name("status")
                     .data("{\"type\":\"RETRIEVING\",\"message\":\"Retrieving knowledge base...\"}"));
 
-            var candidates = retrieveByRoute(route, question, kbIds);
+            var candidates = plan.candidates();
             if (candidates.isEmpty()) {
                 sendNotFound(emitter);
                 log.info("[StreamRAG] no context sessionId={} elapsed={}ms", sessionId, System.currentTimeMillis() - start);
@@ -78,12 +92,12 @@ public class StreamingRagService {
                 return;
             }
 
-            var trimmed = contextTrimmer.trim(filtered);
+            var trimmed = plan.trimmed();
             emitter.send(SseEmitter.event()
                     .name("status")
                     .data("{\"type\":\"GENERATING\",\"message\":\"Generating answer...\"}"));
 
-            String context = contextBuilder.buildContext(trimmed);
+            String context = plan.context();
             String systemPrompt = RagPromptTemplate.buildSystemPrompt(question, context, trimmed.size(), route);
             StringBuilder fullAnswer = new StringBuilder();
 
@@ -134,12 +148,20 @@ public class StreamingRagService {
 
     public RagResponse syncQuery(String question, List<Long> kbIds, String sessionId) {
         long start = System.currentTimeMillis();
-        QueryRoutingService.QueryRoute route = queryRoutingService.classify(question);
+        FullRagPipeline.QueryPlan plan = fullRagPipeline.prepare(question, kbIds);
+        QueryRoutingService.QueryRoute route = plan.route();
         log.info("[SyncRAG] start sessionId={} route={} kbIds={} question={}", sessionId, route, kbIds, preview(question));
 
-        var candidates = retrieveByRoute(route, question, kbIds);
+        var candidates = plan.candidates();
         if (candidates.isEmpty()) {
-            return RagResponse.notFound();
+            return RagResponse.builder()
+                    .answer("当前知识库中没有找到与该问题相关的可用内容。建议你换个关键词，或者把问题问得更具体一点。")
+                    .sources(List.of())
+                    .queryRoute(route)
+                    .retrievedChunkIds(new Long[0])
+                    .trimmedChunkIds(new Long[0])
+                    .notFound(true)
+                    .build();
         }
 
         var filtered = candidates;
@@ -147,11 +169,18 @@ public class StreamingRagService {
                 sessionId, candidates.size(), filtered.size());
 
         if (filtered.isEmpty()) {
-            return RagResponse.notFound();
+            return RagResponse.builder()
+                    .answer("当前知识库中没有找到与该问题相关的可用内容。建议你换个关键词，或者把问题问得更具体一点。")
+                    .sources(List.of())
+                    .queryRoute(route)
+                    .retrievedChunkIds(new Long[0])
+                    .trimmedChunkIds(new Long[0])
+                    .notFound(true)
+                    .build();
         }
 
-        var trimmed = contextTrimmer.trim(filtered);
-        String context = contextBuilder.buildContext(trimmed);
+        var trimmed = plan.trimmed();
+        String context = plan.context();
         String systemPrompt = RagPromptTemplate.buildSystemPrompt(question, context, trimmed.size(), route);
         String answer = chatClient.prompt()
                 .system(systemPrompt)
@@ -169,25 +198,22 @@ public class StreamingRagService {
 
         log.info("[SyncRAG] done sessionId={} route={} sources={} answerLength={} genTokens={} elapsed={}ms",
                 sessionId, route, sources.size(), answer.length(), genTokens, latencyMs);
-        return RagResponse.builder()
+        RagResponse response = RagResponse.builder()
                 .answer(answer)
                 .sources(sources)
                 .latencyMs(latencyMs)
+                .queryRoute(route)
+                .retrievedChunkIds(candidates.stream()
+                        .map(HybridRetrieverService.ScoredChunk::id)
+                        .distinct()
+                        .toArray(Long[]::new))
+                .trimmedChunkIds(trimmed.stream()
+                        .map(HybridRetrieverService.ScoredChunk::id)
+                        .distinct()
+                        .toArray(Long[]::new))
                 .build();
-    }
-
-    private List<HybridRetrieverService.ScoredChunk> retrieveByRoute(
-            QueryRoutingService.QueryRoute route,
-            String question,
-            List<Long> kbIds) {
-        return switch (route) {
-            case SIMPLE -> hybridRetriever.retrieveVectorOnly(question, kbIds, simpleTopN);
-            case STANDARD -> hybridRetriever.retrieve(question, kbIds, standardTopN);
-            case COMPLEX -> {
-                var candidates = enhancedRetriever.retrieveWithHyde(question, kbIds, complexCandidateTopN);
-                yield rerankerService.rerank(question, candidates, rerankerTopN);
-            }
-        };
+        fullRagPipeline.cache(question, kbIds, response);
+        return response;
     }
 
     private void sendNotFound(SseEmitter emitter) throws IOException {

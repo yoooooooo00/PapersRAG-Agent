@@ -37,6 +37,12 @@ public class QueryCacheService {
         return null;
     }
 
+    public void clearAll() {
+        if (!queryCacheEnabled) return;
+        var keys = redisTemplate.keys(CACHE_PREFIX + '*');
+        if (keys != null && !keys.isEmpty()) redisTemplate.delete(keys);
+    }
+
     public void putToCache(String question, List<Long> kbIds, RagResponse response) {
         if (!queryCacheEnabled) {
             return;

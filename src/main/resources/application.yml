@@ -5,7 +5,7 @@ spring:
     name: jc-rag-kb
 
   datasource:
-    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/ragkb}
+    url: ${POSTGRES_URL:jdbc:postgresql://192.168.88.128:5432/ragkb}
     username: ${POSTGRES_USER:ragkb}
     password: ${POSTGRES_PASSWORD:ragkb123}
     driver-class-name: org.postgresql.Driver
@@ -83,13 +83,13 @@ spring:
       cache-null-values: false
 
 minio:
-  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  endpoint: ${MINIO_ENDPOINT:http://192.168.88.128:9000}
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket: ${MINIO_BUCKET:rag-documents}
 
 reranker:
-  enabled: ${RERANKER_ENABLED:false}
+  enabled: ${RERANKER_ENABLED:true}
   endpoint: ${RERANKER_ENDPOINT:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
   api-key: ${RERANKER_API_KEY:${DASHSCOPE_API_KEY:}}
   model: ${RERANKER_MODEL:gte-rerank-v2}
@@ -103,21 +103,36 @@ rag:
     pdf:
       crop-header-points: ${PDF_CROP_HEADER_POINTS:60}
       crop-footer-points: ${PDF_CROP_FOOTER_POINTS:50}
+    grobid:
+      enabled: ${GROBID_ENABLED:true}
+      base-url: ${GROBID_BASE_URL:http://192.168.88.128:8070}
+      timeout: ${GROBID_TIMEOUT:30s}
+      max-response-bytes: ${GROBID_MAX_RESPONSE_BYTES:8388608}
+  index-quality:
+    strict: ${RAG_INDEX_QUALITY_STRICT:true}
   chunk:
-    size: ${RAG_CHUNK_SIZE:720}
-    overlap: ${RAG_CHUNK_OVERLAP:120}
+    size: ${RAG_CHUNK_SIZE:1200}
+    overlap: ${RAG_CHUNK_OVERLAP:150}
     structure-aware: ${RAG_CHUNK_STRUCTURE_AWARE:true}
   retrieval:
     vector-top-k: ${RAG_VECTOR_TOP_K:20}
     fulltext-top-k: ${RAG_FULLTEXT_TOP_K:20}
     return-top-n: ${RAG_RETURN_TOP_N:5}
-    min-score: ${RAG_MIN_SCORE:0.5}
+    # Thresholds are calibrated per retrieval score space; RRF is not filtered by these.
+    vector-min-score: ${RAG_VECTOR_MIN_SCORE:0.35}
+    fulltext-min-score: ${RAG_FULLTEXT_MIN_SCORE:0.05}
+    confidence-fallback-top-k: 0
+    llm-query-expansion-enabled: ${RAG_LLM_QUERY_EXPANSION_ENABLED:true}
   context:
     max-tokens: ${RAG_CONTEXT_MAX_TOKENS:3000}
   cache:
-    query-enabled: ${RAG_QUERY_CACHE_ENABLED:false}
+    query-enabled: ${RAG_QUERY_CACHE_ENABLED:true}
     embedding-ttl: ${EMBEDDING_CACHE_TTL:7d}
     query-ttl: ${QUERY_CACHE_TTL:10m}
+
+  routing:
+    # Temporary experiment: route SIMPLE through STANDARD hybrid retrieval.
+    simple-as-standard-experiment: ${RAG_SIMPLE_AS_STANDARD_EXPERIMENT:false}
 
 sa-token:
   token-name: Authorization

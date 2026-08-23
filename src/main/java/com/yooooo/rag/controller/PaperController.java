@@ -35,6 +35,7 @@ public class PaperController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(required = false) String title,
             @RequestParam(required = false) String authors,
+            @RequestParam(required = false) String affiliations,
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) String venue,
             @RequestParam(required = false) String doi,
@@ -47,7 +48,7 @@ public class PaperController {
             @RequestParam(required = false) Integer rating,
             @RequestParam(required = false) String note) {
         return ApiResponse.ok(paperService.uploadPaper(
-                file, title, authors, year, venue, doi, arxivId,
+                file, title, authors, affiliations, year, venue, doi, arxivId,
                 abstractText, keywords, bibtex, sourceUrl, readingStatus, rating, note));
     }
     @GetMapping

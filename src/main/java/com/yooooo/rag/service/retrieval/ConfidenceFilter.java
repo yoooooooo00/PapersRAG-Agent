@@ -8,34 +8,58 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 根据检索分数过滤低置信度候选文本块。
+ * Filter low-confidence chunks by score threshold.
  */
 @Component
 @Slf4j
 public class ConfidenceFilter {
-    @Value("${rag.retrieval.min-score:0.3}")
-    private double minScore;
+    @Value("${rag.retrieval.vector-min-score:0.35}")
+    private double vectorMinScore;
 
-    public List<HybridRetrieverService.ScoredChunk> filter(
-            List<HybridRetrieverService.ScoredChunk> chunks) {
+    @Value("${rag.retrieval.fulltext-min-score:0.05}")
+    private double fulltextMinScore;
+
+    /** Retain several ranked candidates when every score is below the threshold. */
+    @Value("${rag.retrieval.confidence-fallback-top-k:5}")
+    private int fallbackTopK;
+
+    public List<HybridRetrieverService.ScoredChunk> filter(List<HybridRetrieverService.ScoredChunk> chunks) {
+        return filterByScore(chunks, vectorMinScore);
+    }
+
+    public List<HybridRetrieverService.ScoredChunk> filterVector(List<HybridRetrieverService.ScoredChunk> chunks) {
+        return filterByScore(chunks, vectorMinScore);
+    }
+
+    public List<HybridRetrieverService.ScoredChunk> filterFulltext(List<HybridRetrieverService.ScoredChunk> chunks) {
+        return filterByScore(chunks, fulltextMinScore);
+    }
+
+    private List<HybridRetrieverService.ScoredChunk> filterByScore(
+            List<HybridRetrieverService.ScoredChunk> chunks, double threshold) {
         List<HybridRetrieverService.ScoredChunk> filtered = chunks.stream()
-                .filter(c -> c.score() >= minScore)
+                .filter(c -> c.score() >= threshold)
                 .collect(Collectors.toList());
 
-        if (filtered.isEmpty() && !chunks.isEmpty()) {
-            HybridRetrieverService.ScoredChunk best = chunks.stream()
-                    .max(Comparator.comparingDouble(HybridRetrieverService.ScoredChunk::score))
-                    .orElse(chunks.get(0));
-            log.debug("[ConfidenceFilter] 所有 chunk 低于阈值 {}，保留最高分1条（score={}）",
-                    minScore, best.score());
-            filtered = List.of(best);
+        if (filtered.isEmpty() && !chunks.isEmpty() && fallbackTopK > 0) {
+            int keepCount = Math.max(1, Math.min(fallbackTopK, chunks.size()));
+            filtered = chunks.stream()
+                    .sorted(Comparator.comparingDouble(HybridRetrieverService.ScoredChunk::score).reversed())
+                    .limit(keepCount)
+                    .collect(Collectors.toList());
+            log.debug("[ConfidenceFilter] all chunks are below minScore={}, keep fallback count={} bestScore={}",
+                    threshold, filtered.size(), filtered.get(0).score());
         }
 
         int filteredCount = chunks.size() - filtered.size();
         if (filteredCount > 0) {
-            log.debug("[ConfidenceFilter] 过滤低置信度 chunk：{}条", filteredCount);
+            log.debug("[ConfidenceFilter] filtered {} low-confidence chunks", filteredCount);
         }
 
         return filtered;
+    }
+
+    public double getMinScore() {
+        return vectorMinScore;
     }
 }

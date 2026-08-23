@@ -17,7 +17,7 @@ import org.springframework.stereotype.Service;
 public class QueryNormalizerService {
     private final ChatClient chatClient;
 
-    @Cacheable(value = "query-normalize-cache", key = "#question.hashCode()")
+    @Cacheable(value = "query-normalize-cache", key = "#question")
     public String normalize(String question) {
         if (question == null || question.isBlank()) {
             return "";

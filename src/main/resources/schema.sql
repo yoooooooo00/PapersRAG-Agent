@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS paper (
     doc_id BIGINT,
     title VARCHAR(500) NOT NULL,
     authors TEXT,
+    affiliations TEXT,
     year INT,
     venue VARCHAR(300),
     doi VARCHAR(200),
@@ -245,6 +246,8 @@ CREATE TABLE IF NOT EXISTS paper (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     is_deleted BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+ALTER TABLE paper ADD COLUMN IF NOT EXISTS affiliations TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_paper_kb_id
     ON paper (kb_id) WHERE is_deleted = FALSE;

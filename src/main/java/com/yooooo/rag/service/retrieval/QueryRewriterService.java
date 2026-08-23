@@ -21,7 +21,7 @@ public class QueryRewriterService {
     private final TokenMetrics tokenMetrics;
     private final ContextTrimmerService contextTrimmer;
 
-    @Cacheable(value = "hyde-cache", key = "#question.hashCode()")
+    @Cacheable(value = "hyde-cache", key = "#question")
     public String generateHypotheticalAnswer(String question) {
         log.debug("[QueryRewriter] HyDE 生成假设回答：{}", question);
 

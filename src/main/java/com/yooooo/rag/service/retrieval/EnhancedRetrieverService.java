@@ -25,17 +25,23 @@ public class EnhancedRetrieverService {
     private final EmbeddingService embeddingService;
     private final DocChunkRepository chunkRepository;
     private final ConfidenceFilter confidenceFilter;
+    private final RerankerService rerankerService;
 
     @Value("${rag.retrieval.vector-top-k:20}")
     private int vectorTopK;
     @Value("${rag.retrieval.fulltext-top-k:20}")
     private int fulltextTopK;
+    @Value("${reranker.top-n:5}")
+    private int rerankerTopN;
     private static final int RRF_K = 60;
 
-    public List<HybridRetrieverService.ScoredChunk> retrieveWithHyde(
-            String question, List<Long> kbIds, int topN) {
-        List<HybridRetrieverService.ScoredChunk> originalResults =
-                hybridRetriever.retrieve(question, kbIds, vectorTopK);
+    public List<HybridRetrieverService.ScoredChunk> retrieveWithHyde(String question, List<Long> kbIds, int topN) {
+        return retrieveWithTrace(question, kbIds, topN).getChunks();
+    }
+
+    public HybridRetrieverService.RetrievalOutcome retrieveWithTrace(String question, List<Long> kbIds, int topN) {
+        HybridRetrieverService.RetrievalOutcome originalOutcome =
+                hybridRetriever.retrieveWithTrace(question, kbIds, vectorTopK);
 
         String hydeAnswer = queryRewriter.generateHypotheticalAnswer(question);
         float[] hydeEmbedding = embeddingService.embed(hydeAnswer);
@@ -44,31 +50,62 @@ public class EnhancedRetrieverService {
                 .flatMap(kbId -> hydrateScoredChunks(
                         chunkRepository.findVectorSimilarityScores(kbId, hydeEmbeddingStr, vectorTopK)).stream())
                 .collect(Collectors.toList());
-        hydeResults = confidenceFilter.filter(hydeResults);
+        List<HybridRetrieverService.ScoredChunk> hydeFiltered = confidenceFilter.filterVector(hydeResults);
         log.debug("[EnhancedRetriever] originalResults={} hydeResults={}",
-                originalResults.size(), hydeResults.size());
+                originalOutcome.getChunks().size(), hydeFiltered.size());
 
         Map<Long, Double> scoreMap = new LinkedHashMap<>();
         Map<Long, DocChunk> chunkMap = new HashMap<>();
 
-        for (int rank = 0; rank < originalResults.size(); rank++) {
-            HybridRetrieverService.ScoredChunk sc = originalResults.get(rank);
+        for (int rank = 0; rank < originalOutcome.getChunks().size(); rank++) {
+            HybridRetrieverService.ScoredChunk sc = originalOutcome.getChunks().get(rank);
             double rrfScore = 1.0 / (RRF_K + rank + 1);
             scoreMap.merge(sc.id(), rrfScore, Double::sum);
             chunkMap.put(sc.id(), sc.chunk());
         }
 
-        for (int rank = 0; rank < hydeResults.size(); rank++) {
-            HybridRetrieverService.ScoredChunk sc = hydeResults.get(rank);
+        for (int rank = 0; rank < hydeFiltered.size(); rank++) {
+            HybridRetrieverService.ScoredChunk sc = hydeFiltered.get(rank);
             double rrfScore = 1.0 / (RRF_K + rank + 1);
             scoreMap.merge(sc.id(), rrfScore, Double::sum);
             chunkMap.put(sc.id(), sc.chunk());
         }
 
-        return scoreMap.entrySet().stream()
+        List<HybridRetrieverService.ScoredChunk> merged = scoreMap.entrySet().stream()
                 .sorted(Map.Entry.<Long, Double>comparingByValue().reversed())
-                .limit(topN)
                 .map(e -> new HybridRetrieverService.ScoredChunk(chunkMap.get(e.getKey()), e.getValue()))
+                .collect(Collectors.toList());
+        List<HybridRetrieverService.ScoredChunk> mergedTop = merged.stream()
+                .limit(topN)
+                .collect(Collectors.toList());
+        List<HybridRetrieverService.ScoredChunk> reranked = rerankerService.rerank(question, mergedTop, rerankerTopN);
+
+        HybridRetrieverService.RetrievalTrace trace = new HybridRetrieverService.RetrievalTrace();
+        trace.setRoute("COMPLEX");
+        trace.setQuestion(question);
+        trace.setHydeQuestion(hydeAnswer);
+        trace.setTopN(topN);
+        trace.setVectorTopK(vectorTopK);
+        trace.setFulltextTopK(fulltextTopK);
+        trace.setMinScore(confidenceFilter.getMinScore());
+        trace.getStages().addAll(prefixStages("original_", originalOutcome.getTrace().getStages()));
+        trace.getStages().add(stageTrace("hyde_raw", hydeResults));
+        trace.getStages().add(stageTrace("hyde_filtered", hydeFiltered));
+        trace.getStages().add(stageTrace("rrf_merged", merged));
+        trace.getStages().add(stageTrace("pre_rerank", mergedTop));
+        trace.getStages().add(stageTrace("reranked", reranked));
+
+        return new HybridRetrieverService.RetrievalOutcome(reranked, trace);
+    }
+
+    private List<HybridRetrieverService.StageTrace> prefixStages(String prefix, List<HybridRetrieverService.StageTrace> stages) {
+        return stages.stream()
+                .map(stage -> {
+                    HybridRetrieverService.StageTrace copy = new HybridRetrieverService.StageTrace();
+                    copy.setName(prefix + stage.getName());
+                    copy.setChunks(stage.getChunks());
+                    return copy;
+                })
                 .collect(Collectors.toList());
     }
 
@@ -95,6 +132,20 @@ public class EnhancedRetrieverService {
             }
         }
         return results;
+    }
+
+    private HybridRetrieverService.StageTrace stageTrace(String name, List<HybridRetrieverService.ScoredChunk> chunks) {
+        HybridRetrieverService.StageTrace stage = new HybridRetrieverService.StageTrace();
+        stage.setName(name);
+        stage.setChunks(chunks.stream()
+                .map(sc -> {
+                    HybridRetrieverService.ChunkScoreTrace trace = new HybridRetrieverService.ChunkScoreTrace();
+                    trace.setId(sc.id());
+                    trace.setScore(sc.score());
+                    return trace;
+                })
+                .collect(Collectors.toList()));
+        return stage;
     }
 
     private String toVectorString(float[] embedding) {

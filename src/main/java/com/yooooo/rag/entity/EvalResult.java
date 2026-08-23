@@ -54,6 +54,15 @@ public class EvalResult {
     @Column(columnDefinition = "TEXT")
     private String actualAnswer;
 
+    @Column(columnDefinition = "TEXT")
+    private String routeTrace;
+
+    @Column(columnDefinition = "TEXT")
+    private String retrievalTrace;
+
+    @Column(columnDefinition = "TEXT")
+    private String finalTrace;
+
     private Double faithfulness;
 
     @Column(nullable = false)

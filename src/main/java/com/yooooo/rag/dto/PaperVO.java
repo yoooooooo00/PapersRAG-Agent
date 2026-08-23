@@ -12,6 +12,7 @@ public class PaperVO {
     private Long docId;
     private String title;
     private String authors;
+    private String affiliations;
     private Integer year;
     private String venue;
     private String doi;

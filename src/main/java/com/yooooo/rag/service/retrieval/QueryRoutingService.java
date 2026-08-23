@@ -32,7 +32,7 @@ public class QueryRoutingService {
     @Value("${rag.routing.enabled:true}")
     private boolean enabled;
 
-    @Cacheable(value = "query-route-cache", key = "#question.hashCode()")
+    @Cacheable(value = "query-route-cache", key = "#question")
     public QueryRoute classify(String question) {
         if (!enabled || question == null || question.isBlank()) {
             return QueryRoute.STANDARD;

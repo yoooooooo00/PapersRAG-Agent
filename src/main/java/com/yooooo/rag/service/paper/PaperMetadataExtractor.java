@@ -29,11 +29,27 @@ public class PaperMetadataExtractor {
 
         boolean changed = false;
         String fullText = normalizeWhitespace(parseResult.getFullText());
+        ParseResult.PaperMetadata structured = parseResult.getPaperMetadata();
 
-        String parsedTitle = cleanTitle(parseResult.getTitle());
+        String structuredTitle = structured == null ? null : cleanTitle(structured.getTitle());
+        String parsedTitle = !isBlank(structuredTitle) ? structuredTitle : cleanTitle(parseResult.getTitle());
         if (!isBlank(parsedTitle) && shouldReplaceTitle(paper.getTitle(), fileName)) {
             paper.setTitle(limit(parsedTitle, 500));
             changed = true;
+        }
+        if (structured != null) {
+            if (isBlank(paper.getAuthors()) && !isBlank(structured.getAuthors())) {
+                paper.setAuthors(limit(structured.getAuthors(), 1000));
+                changed = true;
+            }
+            if (isBlank(paper.getAffiliations()) && !isBlank(structured.getAffiliations())) {
+                paper.setAffiliations(limit(structured.getAffiliations(), 2000));
+                changed = true;
+            }
+            if (paper.getYear() == null && structured.getPublicationYear() != null) {
+                paper.setYear(structured.getPublicationYear());
+                changed = true;
+            }
         }
         if (isBlank(paper.getAbstractText())) {
             String abstractText = extractAbstract(parseResult, fullText);
@@ -74,6 +90,13 @@ public class PaperMetadataExtractor {
             String authors = extractAuthors(parseResult, parsedTitle);
             if (!isBlank(authors)) {
                 paper.setAuthors(limit(authors, 1000));
+                changed = true;
+            }
+        }
+        if (isBlank(paper.getAffiliations())) {
+            String affiliations = extractAffiliations(parseResult, parsedTitle);
+            if (!isBlank(affiliations)) {
+                paper.setAffiliations(limit(affiliations, 2000));
                 changed = true;
             }
         }
@@ -156,8 +179,13 @@ public class PaperMetadataExtractor {
 
         String[] lines = firstPage.split("\\R");
         List<String> candidates = new ArrayList<>();
+        int titleEndIndex = findTitleEndLineIndex(lines, title);
         boolean afterTitle = isBlank(title);
-        for (String rawLine : lines) {
+        for (int i = 0; i < lines.length; i++) {
+            String rawLine = lines[i];
+            if (!afterTitle && titleEndIndex >= 0 && i > titleEndIndex) {
+                afterTitle = true;
+            }
             String line = normalizeWhitespace(rawLine);
             if (isBlank(line)) {
                 continue;
@@ -185,6 +213,68 @@ public class PaperMetadataExtractor {
         return candidates.isEmpty() ? null : String.join("; ", candidates);
     }
 
+    private String extractAffiliations(ParseResult parseResult, String title) {
+        if (parseResult.getPages() == null || parseResult.getPages().isEmpty()) {
+            return null;
+        }
+        String firstPage = parseResult.getPages().get(0).getText();
+        if (isBlank(firstPage)) {
+            return null;
+        }
+
+        String[] lines = firstPage.split("\\R");
+        List<String> affiliations = new ArrayList<>();
+        int titleEndIndex = findTitleEndLineIndex(lines, title);
+        boolean afterTitle = isBlank(title);
+        for (int i = 0; i < lines.length; i++) {
+            String rawLine = lines[i];
+            if (!afterTitle && titleEndIndex >= 0 && i > titleEndIndex) {
+                afterTitle = true;
+            }
+            String line = normalizeWhitespace(rawLine);
+            if (isBlank(line)) {
+                continue;
+            }
+            if (!afterTitle) {
+                if (sameLooseText(line, title)) {
+                    afterTitle = true;
+                }
+                continue;
+            }
+            String lower = line.toLowerCase(Locale.ROOT);
+            if (lower.contains("abstract") || lower.matches(".*\\bintroduction\\b.*")) {
+                break;
+            }
+            if (looksLikeInstitutionLine(line)) {
+                String cleaned = line.replaceAll("(?i)\\b[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}\\b", "")
+                        .replaceAll("\\s+", " ").strip();
+                if (!cleaned.isBlank() && !affiliations.contains(cleaned)) {
+                    affiliations.add(cleaned);
+                }
+            }
+        }
+        return affiliations.isEmpty() ? null : String.join("; ", affiliations);
+    }
+    private int findTitleEndLineIndex(String[] lines, String title) {
+        String target = normalizeForCompare(title);
+        if (target.isBlank() || lines == null) {
+            return -1;
+        }
+        int maxStart = Math.min(lines.length, 10);
+        for (int start = 0; start < maxStart; start++) {
+            StringBuilder candidate = new StringBuilder();
+            for (int end = start; end < Math.min(lines.length, start + 5); end++) {
+                candidate.append(normalizeForCompare(lines[end]));
+                if (candidate.toString().equals(target)) {
+                    return end;
+                }
+                if (candidate.length() > target.length()) {
+                    break;
+                }
+            }
+        }
+        return -1;
+    }
     private boolean shouldReplaceTitle(String currentTitle, String fileName) {
         if (isBlank(currentTitle)) {
             return true;
@@ -219,13 +309,19 @@ public class PaperMetadataExtractor {
     }
 
     private boolean looksLikeAffiliation(String line) {
+        return looksLikeInstitutionLine(line) || line.contains("@");
+    }
+
+    private boolean looksLikeInstitutionLine(String line) {
         String lower = line.toLowerCase(Locale.ROOT);
         return lower.contains("university")
                 || lower.contains("institute")
                 || lower.contains("department")
                 || lower.contains("laboratory")
                 || lower.contains("school of")
-                || lower.contains("@");
+                || lower.contains("college")
+                || lower.contains("research center")
+                || lower.contains("research centre");
     }
 
     private boolean looksLikeMetadata(String line) {

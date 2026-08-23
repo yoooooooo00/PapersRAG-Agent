@@ -5,6 +5,7 @@ import com.yooooo.rag.service.splitter.ChunkService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import static org.assertj.core.api.Assertions.assertThat;
 /**
@@ -15,6 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ChunkServiceTest {
     @Autowired
     private ChunkService chunkService;
+
+    @Value("${rag.chunk.size}")
+    private int configuredChunkSize;
 
     @Test
     void chunksNotTooLargeOrTooSmall() {
@@ -32,7 +36,7 @@ class ChunkServiceTest {
 
         assertThat(chunks).isNotEmpty();
         for (ChunkResult chunk : chunks) {
-            assertThat(chunk.getContent().length()).isLessThanOrEqualTo(620);
+            assertThat(chunk.getContent().length()).isLessThanOrEqualTo(configuredChunkSize);
 
             assertThat(chunk.getContent().length()).isGreaterThanOrEqualTo(20);
         }
@@ -41,7 +45,7 @@ class ChunkServiceTest {
             String end0 = chunks.get(0).getContent();
             String start1 = chunks.get(1).getContent();
 
-            String overlapPart = end0.substring(Math.max(0, end0.length() - 64));
+            String overlapPart = end0.substring(Math.max(0, end0.length() - Math.min(150, end0.length())));
             assertThat(start1).contains(overlapPart.substring(0, Math.min(30, overlapPart.length())));
         }
     }

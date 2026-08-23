@@ -5,8 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 
 /**
- * 文档解析结果对象，包含解析是否成功、页数和文本段落。
- */
+ * 鏂囨。瑙ｆ瀽缁撴灉瀵硅薄锛屽寘鍚В鏋愭槸鍚︽垚鍔熴€侀〉鏁板拰鏂囨湰娈佃惤銆? */
 @Data
 @Builder
 public class ParseResult {
@@ -15,9 +14,9 @@ public class ParseResult {
     private List<PageContent> pages;
     private int totalPages;
     private String title;
+    private PaperMetadata paperMetadata;
 /**
- * 文档单页解析结果，包含页码和文本。
- */
+ * 鏂囨。鍗曢〉瑙ｆ瀽缁撴灉锛屽寘鍚〉鐮佸拰鏂囨湰銆? */
 
     @Data
     @Builder
@@ -29,6 +28,14 @@ public class ParseResult {
         private String contentType;
     }
 
+    @Data
+    @Builder
+    public static class PaperMetadata {
+        private String title;
+        private String authors;
+        private String affiliations;
+        private Integer publicationYear;
+    }
     public static ParseResult failure(String errorMsg) {
         return ParseResult.builder()
                 .success(false)

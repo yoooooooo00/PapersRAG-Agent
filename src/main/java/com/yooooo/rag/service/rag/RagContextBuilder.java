@@ -58,7 +58,10 @@ public class RagContextBuilder {
             if (chunk.getTableCaption() != null && !chunk.getTableCaption().isBlank()) {
                 sb.append("\nCaption: ").append(chunk.getTableCaption().strip());
             }
-            sb.append("\n").append(sc.content()).append("\n\n");
+            String content = "TABLE".equalsIgnoreCase(chunk.getContentType())
+                    && chunk.getRawContent() != null && !chunk.getRawContent().isBlank()
+                    ? chunk.getRawContent().strip() : sc.content();
+            sb.append("\n").append(content).append("\n\n");
         }
         return sb.toString().strip();
     }

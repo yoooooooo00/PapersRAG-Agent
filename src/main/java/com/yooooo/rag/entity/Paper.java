@@ -33,6 +33,9 @@ public class Paper {
     @Column(columnDefinition = "TEXT")
     private String authors;
 
+    @Column(columnDefinition = "TEXT")
+    private String affiliations;
+
     @Column(name = "year")
     private Integer year;
 

@@ -38,12 +38,13 @@ public class ContextTrimmerService {
         List<HybridRetrieverService.ScoredChunk> selected = new ArrayList<>();
         int usedTokens = 0;
         for (HybridRetrieverService.ScoredChunk sc : candidates) {
-            int chunkTokens = countTokens(sc.content());
+            String contextContent = contentForContext(sc);
+            int chunkTokens = countTokens(contextContent);
             if (usedTokens + chunkTokens <= maxContextTokens) {
                 selected.add(sc);
                 usedTokens += chunkTokens;
             } else if (selected.isEmpty()) {
-                String truncated = truncateToTokens(sc.content(),
+                String truncated = truncateToTokens(contextContent,
                         maxContextTokens - usedTokens);
                 if (!truncated.isBlank()) {
                     DocChunk truncatedChunk = new DocChunk();
@@ -62,6 +63,25 @@ public class ContextTrimmerService {
                 }
                 break;
             } else {
+                int remainingTokens = maxContextTokens - usedTokens;
+                if (remainingTokens > 0) {
+                    String truncated = truncateToTokens(contextContent, remainingTokens);
+                    if (!truncated.isBlank()) {
+                        DocChunk truncatedChunk = new DocChunk();
+                        truncatedChunk.setId(sc.chunk().getId());
+                        truncatedChunk.setDocId(sc.chunk().getDocId());
+                        truncatedChunk.setKbId(sc.chunk().getKbId());
+                        truncatedChunk.setChunkIndex(sc.chunk().getChunkIndex());
+                        truncatedChunk.setContent(truncated);
+                        truncatedChunk.setPageNum(sc.chunk().getPageNum());
+                        truncatedChunk.setSectionTitle(sc.chunk().getSectionTitle());
+                        truncatedChunk.setContentType(sc.chunk().getContentType());
+                        truncatedChunk.setTableCaption(sc.chunk().getTableCaption());
+                        truncatedChunk.setTokenCount(countTokens(truncated));
+                        truncatedChunk.setDocVersion(sc.chunk().getDocVersion());
+                        selected.add(new HybridRetrieverService.ScoredChunk(truncatedChunk, sc.score()));
+                    }
+                }
                 break;
             }
         }
@@ -69,6 +89,16 @@ public class ContextTrimmerService {
                 candidates.size(), selected.size(), usedTokens, maxContextTokens);
         tokenMetrics.recordContextTokens(usedTokens);
         return selected;
+    }
+
+    public String contentForContext(HybridRetrieverService.ScoredChunk sc) {
+        if (sc == null || sc.chunk() == null) return "";
+        DocChunk chunk = sc.chunk();
+        if ("TABLE".equalsIgnoreCase(chunk.getContentType())
+                && chunk.getRawContent() != null && !chunk.getRawContent().isBlank()) {
+            return chunk.getRawContent().strip();
+        }
+        return chunk.getContent() == null ? "" : chunk.getContent().strip();
     }
 
     public int countTokens(String text) {

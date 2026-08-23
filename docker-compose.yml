@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: rag-postgres
@@ -33,6 +33,14 @@
       interval: 10s
       timeout: 5s
       retries: 5
+
+  grobid:
+    image: lfoppiano/grobid:0.8.2-crf
+    container_name: rag-grobid
+    profiles: ["document-ai"]
+    ports:
+      - "8070:8070"
+    restart: unless-stopped
 
 volumes:
   rag-postgres-data:

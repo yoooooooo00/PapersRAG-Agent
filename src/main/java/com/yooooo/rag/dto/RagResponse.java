@@ -1,5 +1,6 @@
 package com.yooooo.rag.dto;
 
+import com.yooooo.rag.service.retrieval.QueryRoutingService;
 import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -18,10 +19,10 @@ public class RagResponse {
     private List<Source> sources;
     private int latencyMs;
     private boolean notFound;
+    private QueryRoutingService.QueryRoute queryRoute;
+    private Long[] retrievedChunkIds;
+    private Long[] trimmedChunkIds;
 
-    /**
-     * Source item for a cited chunk.
-     */
     @Data
     @Builder
     @NoArgsConstructor
@@ -39,9 +40,16 @@ public class RagResponse {
     }
 
     public static RagResponse notFound() {
+        return notFound(null);
+    }
+
+    public static RagResponse notFound(QueryRoutingService.QueryRoute route) {
         return RagResponse.builder()
-                .answer("当前知识库中没有找到与该问题相关的可靠内容。建议你换个关键词，或者把问题问得更具体一点。")
+                .answer("No relevant content was found in the knowledge base. Try a more specific query.")
                 .sources(List.of())
+                .retrievedChunkIds(new Long[0])
+                .trimmedChunkIds(new Long[0])
+                .queryRoute(route)
                 .notFound(true)
                 .build();
     }

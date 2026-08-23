@@ -15,9 +15,10 @@ import org.springframework.stereotype.Component;
 public class EvalTaskLauncher {
     private final @Lazy EvalService evalService;
 
-    @Async
+    @Async("indexTaskExecutor")
     public void launch(Long taskId, Long kbId, String evalVersion) {
         log.info("[EvalTask] launch taskId={} kbId={} version={}", taskId, kbId, evalVersion);
         evalService.executeAsync(taskId, kbId, evalVersion);
     }
 }
+

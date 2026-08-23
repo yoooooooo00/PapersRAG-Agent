@@ -236,6 +236,9 @@ public class EvalController {
         view.setHit(result.getHit());
         view.setRank(result.getRank());
         view.setActualAnswer(result.getActualAnswer());
+        view.setRouteTrace(result.getRouteTrace());
+        view.setRetrievalTrace(result.getRetrievalTrace());
+        view.setFinalTrace(result.getFinalTrace());
         view.setFaithfulness(result.getFaithfulness());
         view.setEvalVersion(result.getEvalVersion());
         view.setEvalAt(result.getEvalAt());
@@ -311,8 +314,14 @@ public class EvalController {
         private Boolean hit;
         private Integer rank;
         private String actualAnswer;
+        private String routeTrace;
+        private String retrievalTrace;
+        private String finalTrace;
         private Double faithfulness;
         private String evalVersion;
         private LocalDateTime evalAt;
     }
 }
+
+
+

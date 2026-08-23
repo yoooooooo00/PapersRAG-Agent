@@ -10,13 +10,13 @@ import lombok.Data;
 @Builder
 public class ChunkConfig {
     @Builder.Default
-    private int chunkSize = 512;
+    private int chunkSize = 1200;
 
     @Builder.Default
-    private int chunkOverlap = 64;
+    private int chunkOverlap = 150;
 
     @Builder.Default
-    private boolean structureAware = false;
+    private boolean structureAware = true;
 
     public static ChunkConfig defaultConfig() {
         return ChunkConfig.builder().build();

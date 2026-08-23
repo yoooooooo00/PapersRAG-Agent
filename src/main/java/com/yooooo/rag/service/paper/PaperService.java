@@ -45,6 +45,7 @@ public class PaperService {
             MultipartFile file,
             String title,
             String authors,
+            String affiliations,
             Integer year,
             String venue,
             String doi,
@@ -67,6 +68,7 @@ public class PaperService {
         paper.setDocId(doc.getId());
         paper.setTitle(resolvePaperTitle(title, doc.getFileName()));
         paper.setAuthors(authors);
+        paper.setAffiliations(affiliations);
         paper.setYear(year);
         paper.setVenue(venue);
         paper.setDoi(doi);
@@ -124,6 +126,7 @@ public class PaperService {
         paper.setDocId(req.getDocId());
         paper.setTitle(req.getTitle().strip());
         paper.setAuthors(req.getAuthors());
+        paper.setAffiliations(req.getAffiliations());
         paper.setYear(req.getYear());
         paper.setVenue(req.getVenue());
         paper.setDoi(req.getDoi());
@@ -161,6 +164,7 @@ public class PaperService {
             paper.setTitle(req.getTitle().strip());
         }
         if (req.getAuthors() != null) paper.setAuthors(req.getAuthors());
+        if (req.getAffiliations() != null) paper.setAffiliations(req.getAffiliations());
         if (req.getYear() != null) paper.setYear(req.getYear());
         if (req.getVenue() != null) paper.setVenue(req.getVenue());
         if (req.getDoi() != null) paper.setDoi(req.getDoi());
@@ -388,6 +392,7 @@ public class PaperService {
                 .docId(paper.getDocId())
                 .title(paper.getTitle())
                 .authors(paper.getAuthors())
+                .affiliations(paper.getAffiliations())
                 .year(paper.getYear())
                 .venue(paper.getVenue())
                 .doi(paper.getDoi())

@@ -12,6 +12,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,6 +41,10 @@ public class HybridRetrieverService {
     private static final int RRF_K = 60;
 
     public List<ScoredChunk> retrieve(String question, List<Long> kbIds, int topN) {
+        return retrieveWithTrace(question, kbIds, topN).getChunks();
+    }
+
+    public RetrievalOutcome retrieveWithTrace(String question, List<Long> kbIds, int topN) {
         float[] queryEmbedding = embeddingService.embed(question);
         String embeddingStr = toVectorString(queryEmbedding);
 
@@ -55,21 +62,40 @@ public class HybridRetrieverService {
                     .collect(Collectors.toList());
         }
 
-        vectorResults = confidenceFilter.filter(vectorResults);
-        fulltextResults = confidenceFilter.filter(fulltextResults);
+        List<ScoredChunk> vectorFiltered = confidenceFilter.filterVector(vectorResults);
+        List<ScoredChunk> fulltextFiltered = confidenceFilter.filterFulltext(fulltextResults);
 
         log.debug("[HybridRetriever] vectorResults={} fulltextResults={}",
-                vectorResults.size(), fulltextResults.size());
+                vectorFiltered.size(), fulltextFiltered.size());
 
-        List<ScoredChunk> merged = rrfMerge(vectorResults, fulltextResults);
+        List<ScoredChunk> merged = rrfMerge(vectorFiltered, fulltextFiltered);
         List<ScoredChunk> topResults = merged.stream()
                 .limit(topN)
                 .collect(Collectors.toList());
         log.info("[HybridRetriever] RRF merged TopN={} returned={}", topN, topResults.size());
-        return topResults;
+
+        RetrievalTrace trace = new RetrievalTrace();
+        trace.setRoute("STANDARD");
+        trace.setQuestion(question);
+        trace.setTopN(topN);
+        trace.setVectorTopK(vectorTopK);
+        trace.setFulltextTopK(fulltextTopK);
+        trace.setMinScore(confidenceFilter.getMinScore());
+        trace.getStages().add(stageTrace("vector_raw", vectorResults));
+        trace.getStages().add(stageTrace("vector_filtered", vectorFiltered));
+        trace.getStages().add(stageTrace("fulltext_raw", fulltextResults));
+        trace.getStages().add(stageTrace("fulltext_filtered", fulltextFiltered));
+        trace.getStages().add(stageTrace("rrf_merged", merged));
+        trace.getStages().add(stageTrace("final", topResults));
+
+        return new RetrievalOutcome(topResults, trace);
     }
 
     public List<ScoredChunk> retrieveVectorOnly(String question, List<Long> kbIds, int topN) {
+        return retrieveVectorOnlyWithTrace(question, kbIds, topN).getChunks();
+    }
+
+    public RetrievalOutcome retrieveVectorOnlyWithTrace(String question, List<Long> kbIds, int topN) {
         float[] queryEmbedding = embeddingService.embed(question);
         String embeddingStr = toVectorString(queryEmbedding);
         List<ScoredChunk> vectorResults = kbIds.stream()
@@ -77,26 +103,37 @@ public class HybridRetrieverService {
                         chunkRepository.findVectorSimilarityScores(kbId, embeddingStr, topN)).stream())
                 .collect(Collectors.toList());
 
-        List<ScoredChunk> results = confidenceFilter.filter(vectorResults).stream()
+        List<ScoredChunk> filtered = confidenceFilter.filterVector(vectorResults).stream()
                 .limit(topN)
                 .collect(Collectors.toList());
-        log.info("[HybridRetriever] Vector only TopN={} returned={}", topN, results.size());
-        return results;
+        log.info("[HybridRetriever] Vector only TopN={} returned={}", topN, filtered.size());
+
+        RetrievalTrace trace = new RetrievalTrace();
+        trace.setRoute("SIMPLE");
+        trace.setQuestion(question);
+        trace.setTopN(topN);
+        trace.setVectorTopK(vectorTopK);
+        trace.setFulltextTopK(fulltextTopK);
+        trace.setMinScore(confidenceFilter.getMinScore());
+        trace.getStages().add(stageTrace("vector_raw", vectorResults));
+        trace.getStages().add(stageTrace("vector_filtered", filtered));
+        trace.getStages().add(stageTrace("final", filtered));
+
+        return new RetrievalOutcome(filtered, trace);
     }
 
-    public List<ScoredChunk> retrieveWithPermissionCheck(
-            String question, List<Long> requestedKbIds, int topN) {
+    public List<ScoredChunk> retrieveWithPermissionCheck(String question, List<Long> requestedKbIds, int topN) {
         List<Long> allowedKbIds = filterAllowedKbIds(requestedKbIds);
 
         if (allowedKbIds.isEmpty()) {
-            throw new RuntimeException("您对所请求的知识库没有访问权限");
+            throw new RuntimeException("鎮ㄥ鎵€璇锋眰鐨勭煡璇嗗簱娌℃湁璁块棶鏉冮檺");
         }
 
         if (allowedKbIds.size() < requestedKbIds.size()) {
             List<Long> denied = requestedKbIds.stream()
                     .filter(id -> !allowedKbIds.contains(id))
                     .toList();
-            log.warn("[权限过滤] userId={} 无权访问 kbIds={}，已过滤",
+            log.warn("[鏉冮檺杩囨护] userId={} 鏃犳潈璁块棶 kbIds={}锛屽凡杩囨护",
                     UserContext.getUserId(), denied);
         }
 
@@ -104,7 +141,9 @@ public class HybridRetrieverService {
     }
 
     private List<Long> filterAllowedKbIds(List<Long> kbIds) {
-        if (UserContext.isAdmin()) return kbIds;
+        if (UserContext.isAdmin()) {
+            return kbIds;
+        }
 
         String userId = String.valueOf(UserContext.getUserId());
         String deptId = UserContext.getDepartmentId();
@@ -114,7 +153,9 @@ public class HybridRetrieverService {
                     boolean isPublic = kbRepository.findById(kbId)
                             .map(kb -> kb.getIsPublic())
                             .orElse(false);
-                    if (isPublic) return true;
+                    if (isPublic) {
+                        return true;
+                    }
 
                     return permissionRepository.existsByKbIdAndSubjectTypeAndSubjectId(
                             kbId, "USER", userId)
@@ -173,6 +214,15 @@ public class HybridRetrieverService {
         return results;
     }
 
+    private StageTrace stageTrace(String name, List<ScoredChunk> chunks) {
+        StageTrace stage = new StageTrace();
+        stage.setName(name);
+        stage.setChunks(chunks.stream()
+                .map(sc -> new ChunkScoreTrace(sc.id(), sc.score()))
+                .collect(Collectors.toList()));
+        return stage;
+    }
+
     private String toVectorString(float[] embedding) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < embedding.length; i++) {
@@ -190,5 +240,43 @@ public class HybridRetrieverService {
         public Long id() { return chunk.getId(); }
 
         public String content() { return chunk.getContent(); }
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RetrievalOutcome {
+        private List<ScoredChunk> chunks;
+        private RetrievalTrace trace;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RetrievalTrace {
+        private String route;
+        private String question;
+        private String hydeQuestion;
+        private Integer topN;
+        private Integer vectorTopK;
+        private Integer fulltextTopK;
+        private Double minScore;
+        private List<StageTrace> stages = new ArrayList<>();
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class StageTrace {
+        private String name;
+        private List<ChunkScoreTrace> chunks = new ArrayList<>();
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ChunkScoreTrace {
+        private Long id;
+        private Double score;
     }
 }

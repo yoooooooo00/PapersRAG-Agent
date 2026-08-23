@@ -18,10 +18,10 @@ public class ChunkService {
     private final SlidingWindowChunkSplitter slidingWindowSplitter;
     private final StructureAwareChunkSplitter structureAwareSplitter;
 
-    @Value("${rag.chunk.size:512}")
+    @Value("${rag.chunk.size:1200}")
     private int defaultChunkSize;
 
-    @Value("${rag.chunk.overlap:64}")
+    @Value("${rag.chunk.overlap:150}")
     private int defaultOverlap;
 
     @Value("${rag.chunk.structure-aware:true}")
@@ -37,10 +37,20 @@ public class ChunkService {
         return chunk(parseResult, config);
     }
 
+    private void validateConfig(ChunkConfig config) {
+        if (config == null) throw new IllegalArgumentException("Chunk config must not be null");
+        if (config.getChunkSize() < 20) throw new IllegalArgumentException("Chunk size must be at least 20 characters");
+        if (config.getChunkOverlap() < 0 || config.getChunkOverlap() >= config.getChunkSize()) {
+            throw new IllegalArgumentException("Chunk overlap must be >= 0 and smaller than chunk size");
+        }
+    }
+
     public List<ChunkResult> chunk(ParseResult parseResult, ChunkConfig config) {
         if (parseResult == null || !parseResult.isSuccess()) {
             return List.of();
         }
+
+        validateConfig(config);
 
         ChunkSplitter splitter = config.isStructureAware()
                 ? structureAwareSplitter
